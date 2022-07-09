@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                                                     OrderMap.mqh |
-//|                                    Copyright 2015, EarnForex.com |
-//|                                         http://www.earnforex.com |
+//|                               Copyright 2015-2022, EarnForex.com |
+//|                                        https://www.earnforex.com |
 //+------------------------------------------------------------------+
 #include <DOMObject.mqh>
 //+------------------------------------------------------------------+
@@ -12,49 +12,52 @@
 class COrderMap : public CDOMObject
 {
 protected:
-   CDOMObject *m_first_node;       // Pointer to the first element of the list.
-   CDOMObject *m_last_node;        // Pointer to the last element of the list.
-   CDOMObject *m_curr_node;        // Pointer to the current element of the list.
-   int m_curr_idx;         // Index of the currently selected list item.
-   int m_data_total;       // Number of elements in the list.
+    CDOMObject      *m_first_node;       // Pointer to the first element of the list.
+    CDOMObject      *m_last_node;        // Pointer to the last element of the list.
+    CDOMObject      *m_curr_node;        // Pointer to the current element of the list.
+    int              m_curr_idx;         // Index of the currently selected list item.
+    int              m_data_total;       // Number of elements in the list.
 
 public:
-   COrderMap();
-  ~COrderMap();
+                     COrderMap();
+                    ~COrderMap();
 
-   // Methods of access to protected data.
-   int Total() const { return(m_data_total); }
-   
-   // Methods of filling the list.
-   int Add(CDOMObject *new_node);
+    // Methods of access to protected data.
+    int              Total() const
+    {
+        return m_data_total;
+    }
 
-   // Methods for navigating.
-   int IndexOf(CDOMObject *node);
-   CDOMObject *GetNodeAtIndex(int index);
-   CDOMObject *GetFirstNode();
-   CDOMObject *GetCurrentNode();
-   CDOMObject *GetNextNode();
-   CDOMObject *GetFirstNodeAtPrice(double order_price);
-   CDOMObject *GetNodeByTicket(int order_ticket);
-   
-   // Methods for deleting.
-   CDOMObject *DetachCurrent();
-   bool DeleteCurrent();
-   bool Delete(int index);
-   void Clear();
-   
-   // Method of output.
-   void PrintAll();
+    // Methods of filling the list.
+    int              Add(CDOMObject *new_node);
+
+    // Methods for navigating.
+    int              IndexOf(CDOMObject *node);
+    CDOMObject      *GetNodeAtIndex(int index);
+    CDOMObject      *GetFirstNode();
+    CDOMObject      *GetCurrentNode();
+    CDOMObject      *GetNextNode();
+    CDOMObject      *GetFirstNodeAtPrice(double order_price);
+    CDOMObject      *GetNodeByTicket(int order_ticket);
+
+    // Methods for deleting.
+    CDOMObject      *DetachCurrent();
+    bool             DeleteCurrent();
+    bool             Delete(int index);
+    void             Clear();
+
+    // Method of output.
+    void             PrintAll();
 };
 
 //+------------------------------------------------------------------+
 //| Constructor                                                      |
 //+------------------------------------------------------------------+
 COrderMap::COrderMap() : m_first_node(NULL),
-                     m_last_node(NULL),
-                     m_curr_node(NULL),
-                     m_curr_idx(-1),
-                     m_data_total(0)
+    m_last_node(NULL),
+    m_curr_node(NULL),
+    m_curr_idx(-1),
+    m_data_total(0)
 {
 }
 
@@ -63,7 +66,7 @@ COrderMap::COrderMap() : m_first_node(NULL),
 //+------------------------------------------------------------------+
 COrderMap::~COrderMap()
 {
-   Clear();
+    Clear();
 }
 
 //+------------------------------------------------------------------+
@@ -71,21 +74,21 @@ COrderMap::~COrderMap()
 //+------------------------------------------------------------------+
 int COrderMap::IndexOf(CDOMObject *node)
 {
-   // Check for pointer validity.
-   if (!CheckPointer(node) || !CheckPointer(m_curr_node)) return(-1);
-   
-   // Current node is the one we need.
-   if (node == m_curr_node) return(m_curr_idx);
-   
-   // First node is the one we need.
-   if (GetFirstNode() == node) return(0);
-   
-   // Brute force search.
-   for (int i = 1; i < m_data_total; i++)
-      if (GetNextNode() == node) return(i);
+    // Check for pointer validity.
+    if (!CheckPointer(node) || !CheckPointer(m_curr_node)) return -1;
 
-   // Not found.
-   return(-1);
+    // Current node is the one we need.
+    if (node == m_curr_node) return(m_curr_idx);
+
+    // First node is the one we need.
+    if (GetFirstNode() == node) return 0;
+
+    // Brute force search.
+    for (int i = 1; i < m_data_total; i++)
+        if (GetNextNode() == node) return i;
+
+    // Not found.
+    return -1;
 }
 
 //+------------------------------------------------------------------+
@@ -93,58 +96,58 @@ int COrderMap::IndexOf(CDOMObject *node)
 //+------------------------------------------------------------------+
 int COrderMap::Add(CDOMObject *new_node)
 {
-   // Check for pointer validity.
-   if (!CheckPointer(new_node)) return(-1);
+    // Check for pointer validity.
+    if (!CheckPointer(new_node)) return -1;
 
-   // Add node.
-   if (m_first_node == NULL)
-   {
-      m_first_node = new_node;
-      m_last_node = new_node;
-      m_curr_idx = 0;
-   }
-   else 
-   {
-      CDOMObject *node;
-      for (node = GetFirstNode(), m_curr_idx = 0; node != NULL; node = GetNextNode(), m_curr_idx++)
-      {
-         // New node should be put before 'node'.
-         if (node.Price() < new_node.Price())
-         {
-            // New node to be put before the first node.
-            if (node == m_first_node)
+    // Add node.
+    if (m_first_node == NULL)
+    {
+        m_first_node = new_node;
+        m_last_node = new_node;
+        m_curr_idx = 0;
+    }
+    else
+    {
+        CDOMObject *node;
+        for (node = GetFirstNode(), m_curr_idx = 0; node != NULL; node = GetNextNode(), m_curr_idx++)
+        {
+            // New node should be put before 'node'.
+            if (node.Price() < new_node.Price())
             {
-               new_node.Next(m_first_node);
-               m_first_node.Prev(new_node);
-               m_first_node = new_node;
-               break;
+                // New node to be put before the first node.
+                if (node == m_first_node)
+                {
+                    new_node.Next(m_first_node);
+                    m_first_node.Prev(new_node);
+                    m_first_node = new_node;
+                    break;
+                }
+                // Other case.
+                else
+                {
+                    node.Prev().Next(new_node);
+                    new_node.Prev(node.Prev());
+                    new_node.Next(node);
+                    node.Prev(new_node);
+                    break;
+                }
             }
-            // Other case.
-            else
-            {
-               node.Prev().Next(new_node);
-               new_node.Prev(node.Prev());
-               new_node.Next(node);
-               node.Prev(new_node);
-               break;
-            }
-         }
-      }
-      // Did not add during the cycle. New node's price is lower than any node in the list.
-      if (node == NULL)
-      {
-         // Add new node as the last node of the list.
-         m_last_node.Next(new_node);
-         new_node.Prev(m_last_node);
-         m_last_node = new_node;
-         m_curr_idx = m_data_total;
-      }
-   }
-   m_curr_node = new_node;
-   m_data_total++;
-   
-   // Return the new number of nodes.
-   return(m_data_total);
+        }
+        // Did not add during the cycle. New node's price is lower than any node in the list.
+        if (node == NULL)
+        {
+            // Add new node as the last node of the list.
+            m_last_node.Next(new_node);
+            new_node.Prev(m_last_node);
+            m_last_node = new_node;
+            m_curr_idx = m_data_total;
+        }
+    }
+    m_curr_node = new_node;
+    m_data_total++;
+
+    // Return the new number of nodes.
+    return m_data_total;
 }
 
 //+------------------------------------------------------------------+
@@ -152,76 +155,76 @@ int COrderMap::Add(CDOMObject *new_node)
 //+------------------------------------------------------------------+
 CDOMObject *COrderMap::GetNodeAtIndex(int index)
 {
-   int i;
-   bool reverse;
-   CDOMObject *result;
+    int i;
+    bool reverse;
+    CDOMObject *result;
 
-   // Check index validity.
-   if (index >= m_data_total) return(NULL);
-   if (index == m_curr_idx) return(m_curr_node);
+    // Check index validity.
+    if (index >= m_data_total) return NULL;
+    if (index == m_curr_idx) return m_curr_node;
 
-   // Optimize bust list.
-   if (index < m_curr_idx)
-   {
-      // Index to the left of the current.
-      if (m_curr_idx - index < index)
-      {
-         // Closer to the current index.
-         i = m_curr_idx;
-         reverse = true;
-         result = m_curr_node;
-      }
-      else
-      {
-         // Closer to the top of the list.
-         i = 0;
-         reverse = false;
-         result = m_first_node;
-      }
-   }
-   else
-   {
-      // Index to the right of the current.
-      if (index - m_curr_idx < m_data_total - index - 1)
-      {
-         // Closer to the current index.
-         i = m_curr_idx;
-         reverse = false;
-         result = m_curr_node;
-      }
-      else
-      {
-         // Closer to the end of the list.
-         i = m_data_total - 1;
-         reverse = true;
-         result = m_last_node;
-      }
-   }
-   
-   // Check pointer for validity.
-   if (!CheckPointer(result)) return(NULL);
+    // Optimize bust list.
+    if (index < m_curr_idx)
+    {
+        // Index to the left of the current.
+        if (m_curr_idx - index < index)
+        {
+            // Closer to the current index.
+            i = m_curr_idx;
+            reverse = true;
+            result = m_curr_node;
+        }
+        else
+        {
+            // Closer to the top of the list.
+            i = 0;
+            reverse = false;
+            result = m_first_node;
+        }
+    }
+    else
+    {
+        // Index to the right of the current.
+        if (index - m_curr_idx < m_data_total - index - 1)
+        {
+            // Closer to the current index.
+            i = m_curr_idx;
+            reverse = false;
+            result = m_curr_node;
+        }
+        else
+        {
+            // Closer to the end of the list.
+            i = m_data_total - 1;
+            reverse = true;
+            result = m_last_node;
+        }
+    }
 
-   if (reverse)
-   {
-      // Search from right to left.
-      for (; i > index; i--)
-      {
-         result = result.Prev();
-         if (result == NULL) return(NULL);
-      }
-   }
-   else
-   {
-      // Search from left to right.
-      for (; i < index; i++)
-      {
-         result = result.Next();
-         if (result == NULL) return(NULL);
-      }
-   }
-   m_curr_idx = index;
+    // Check pointer for validity.
+    if (!CheckPointer(result)) return NULL;
 
-   return(m_curr_node = result);
+    if (reverse)
+    {
+        // Search from right to left.
+        for (; i > index; i--)
+        {
+            result = result.Prev();
+            if (result == NULL) return NULL;
+        }
+    }
+    else
+    {
+        // Search from left to right.
+        for (; i < index; i++)
+        {
+            result = result.Next();
+            if (result == NULL) return NULL;
+        }
+    }
+    m_curr_idx = index;
+
+    return(m_curr_node = result);
 }
 
 //+------------------------------------------------------------------+
@@ -229,13 +232,13 @@ CDOMObject *COrderMap::GetNodeAtIndex(int index)
 //+------------------------------------------------------------------+
 CDOMObject *COrderMap::GetFirstNode()
 {
-   // Check validity of the first node pointer.
-   if (!CheckPointer(m_first_node)) return(NULL);
+    // Check validity of the first node pointer.
+    if (!CheckPointer(m_first_node)) return NULL;
 
-   // Move index.
-   m_curr_idx = 0;
+    // Move index.
+    m_curr_idx = 0;
 
-   return(m_curr_node = m_first_node);
+    return(m_curr_node = m_first_node);
 }
 
 //+------------------------------------------------------------------+
@@ -243,7 +246,7 @@ CDOMObject *COrderMap::GetFirstNode()
 //+------------------------------------------------------------------+
 CDOMObject *COrderMap::GetCurrentNode()
 {
-   return(m_curr_node);
+    return m_curr_node;
 }
 
 //+------------------------------------------------------------------+
@@ -252,13 +255,13 @@ CDOMObject *COrderMap::GetCurrentNode()
 CDOMObject *COrderMap::GetNextNode()
 {
 
-   // Check validity of current and next node pointers.
-   if (!CheckPointer(m_curr_node) || m_curr_node.Next() == NULL) return(NULL);
+    // Check validity of current and next node pointers.
+    if (!CheckPointer(m_curr_node) || m_curr_node.Next() == NULL) return NULL;
 
-   // Increment node index.
-   m_curr_idx++;
+    // Increment node index.
+    m_curr_idx++;
 
-   return(m_curr_node = m_curr_node.Next());
+    return(m_curr_node = m_curr_node.Next());
 }
 
 //+-----------------------------------------------------------------------------------------------+
@@ -266,22 +269,22 @@ CDOMObject *COrderMap::GetNextNode()
 //+-----------------------------------------------------------------------------------------------+
 CDOMObject *COrderMap::GetFirstNodeAtPrice(double order_price)
 {
-   // Cannot optimize it because the function should return the *first (left-most) occurrence of price* and there can be several nodes with that price.
-   
-   // Check first node validity.
-   if (!CheckPointer(m_first_node)) return(NULL);
-   
-   // Check from left to right, starting with bigger prices.
-   for (m_curr_node = m_first_node, m_curr_idx = 0; m_curr_idx < m_data_total; m_curr_node = m_curr_node.Next(), m_curr_idx++)
-   {
-      if (m_curr_node.Price() == order_price) return(m_curr_node);
-      else if (m_curr_node.Price() < order_price) return(NULL); // Not found.
-   }
+    // Cannot optimize it because the function should return the *first (left-most) occurrence of price* and there can be several nodes with that price.
 
-   // Reset the current index/pointer if the cycle ended at NULL.
-   m_curr_idx = 0;
-   m_curr_node = m_first_node;
-   return(NULL);
+    // Check first node validity.
+    if (!CheckPointer(m_first_node)) return NULL;
+
+    // Check from left to right, starting with bigger prices.
+    for (m_curr_node = m_first_node, m_curr_idx = 0; m_curr_idx < m_data_total; m_curr_node = m_curr_node.Next(), m_curr_idx++)
+    {
+        if (m_curr_node.Price() == order_price) return m_curr_node;
+        else if (m_curr_node.Price() < order_price) return NULL; // Not found.
+    }
+
+    // Reset the current index/pointer if the cycle ended at NULL.
+    m_curr_idx = 0;
+    m_curr_node = m_first_node;
+    return NULL;
 }
 
 //+------------------------------------------------------------------+
@@ -289,18 +292,18 @@ CDOMObject *COrderMap::GetFirstNodeAtPrice(double order_price)
 //+------------------------------------------------------------------+
 CDOMObject *COrderMap::GetNodeByTicket(int order_ticket)
 {
-   if (!CheckPointer(m_first_node)) return(NULL);
+    if (!CheckPointer(m_first_node)) return NULL;
 
-   if (m_curr_node.Ticket() == order_ticket) return(m_curr_node);
-   
-   // Check from left to right.
-   for (m_curr_node = m_first_node, m_curr_idx = 0; m_curr_idx < m_data_total; m_curr_node = m_curr_node.Next(), m_curr_idx++)
-      if (m_curr_node.Ticket() == order_ticket) return(m_curr_node);
+    if (m_curr_node.Ticket() == order_ticket) return m_curr_node;
 
-   // Reset the current index/pointer if the ticket has not been found.
-   m_curr_idx = 0;
-   m_curr_node = m_first_node;
-   return(NULL);
+    // Check from left to right.
+    for (m_curr_node = m_first_node, m_curr_idx = 0; m_curr_idx < m_data_total; m_curr_node = m_curr_node.Next(), m_curr_idx++)
+        if (m_curr_node.Ticket() == order_ticket) return m_curr_node;
+
+    // Reset the current index/pointer if the ticket has not been found.
+    m_curr_idx = 0;
+    m_curr_node = m_first_node;
+    return NULL;
 }
 
 //+------------------------------------------------------------------+
@@ -308,46 +311,46 @@ CDOMObject *COrderMap::GetNodeByTicket(int order_ticket)
 //+------------------------------------------------------------------+
 CDOMObject *COrderMap::DetachCurrent()
 {
-   CDOMObject *tmp_node, *result = NULL;
+    CDOMObject *tmp_node, *result = NULL;
 
-   // Check pointer validity.
-   if (!CheckPointer(m_curr_node)) return(result);
+    // Check pointer validity.
+    if (!CheckPointer(m_curr_node)) return result;
 
-   // "Explode" list.
-   result = m_curr_node;
-   m_curr_node = NULL;
+    // "Explode" list.
+    result = m_curr_node;
+    m_curr_node = NULL;
 
-   // If the deleted item was not the last one, pull up the "tail" of the list.
-   if ((tmp_node = result.Next()) != NULL)
-   {
-      tmp_node.Prev(result.Prev());
-      m_curr_node = tmp_node;
-   }
+    // If the deleted item was not the last one, pull up the "tail" of the list.
+    if ((tmp_node = result.Next()) != NULL)
+    {
+        tmp_node.Prev(result.Prev());
+        m_curr_node = tmp_node;
+    }
 
-   // If the deleted item was not the first one, pull up the "head" of the list.
-   if ((tmp_node = result.Prev()) != NULL)
-   {
-      tmp_node.Next(result.Next());
-      // If "last_node" is removed, move the current pointer to the end of the list.
-      if (m_curr_node == NULL)
-      {
-         m_curr_node = tmp_node;
-         m_curr_idx = m_data_total - 2;
-      }
-   }
-   
-   m_data_total--;
+    // If the deleted item was not the first one, pull up the "head" of the list.
+    if ((tmp_node = result.Prev()) != NULL)
+    {
+        tmp_node.Next(result.Next());
+        // If "last_node" is removed, move the current pointer to the end of the list.
+        if (m_curr_node == NULL)
+        {
+            m_curr_node = tmp_node;
+            m_curr_idx = m_data_total - 2;
+        }
+    }
 
-   // If necessary, adjust the settings of the first and last elements.
-   if (m_first_node == result) m_first_node = result.Next();
-   if (m_last_node == result) m_last_node = result.Prev();
+    m_data_total--;
 
-   // Complete the processing of element removed from the list.
-   // Remove references to the list.
-   result.Prev(NULL);
-   result.Next(NULL);
+    // If necessary, adjust the settings of the first and last elements.
+    if (m_first_node == result) m_first_node = result.Next();
+    if (m_last_node == result) m_last_node = result.Prev();
 
-   return(result);
+    // Complete the processing of element removed from the list.
+    // Remove references to the list.
+    result.Prev(NULL);
+    result.Next(NULL);
+
+    return result;
 }
 
 //+------------------------------------------------------------------+
@@ -355,15 +358,15 @@ CDOMObject *COrderMap::DetachCurrent()
 //+------------------------------------------------------------------+
 bool COrderMap::DeleteCurrent()
 {
-   CDOMObject *result = DetachCurrent();
-   
-   // Check pointer validity.
-   if (result == NULL) return(false);
+    CDOMObject *result = DetachCurrent();
 
-   // Complete the processing of element removed from the list.
-   if (CheckPointer(result) == POINTER_DYNAMIC) delete result;
+    // Check pointer validity.
+    if (result == NULL) return false;
 
-   return(true);
+    // Complete the processing of element removed from the list.
+    if (CheckPointer(result) == POINTER_DYNAMIC) delete result;
+
+    return true;
 }
 
 //+------------------------------------------------------------------+
@@ -371,10 +374,10 @@ bool COrderMap::DeleteCurrent()
 //+------------------------------------------------------------------+
 bool COrderMap::Delete(int index)
 {
-   // No item with the given index.
-   if (GetNodeAtIndex(index) == NULL) return(false);
+    // No item with the given index.
+    if (GetNodeAtIndex(index) == NULL) return false;
 
-   return(DeleteCurrent());
+    return DeleteCurrent();
 }
 
 //+------------------------------------------------------------------+
@@ -382,9 +385,9 @@ bool COrderMap::Delete(int index)
 //+------------------------------------------------------------------+
 void COrderMap::Clear()
 {
-   GetFirstNode();
-   while (m_data_total != 0)
-      if (!DeleteCurrent()) break;
+    GetFirstNode();
+    while (m_data_total != 0)
+        if (!DeleteCurrent()) break;
 }
 
 //+------------------------------------------------------------------+
@@ -392,12 +395,12 @@ void COrderMap::Clear()
 //+------------------------------------------------------------------+
 void COrderMap::PrintAll()
 {
-   CDOMObject *node;
-   node = GetFirstNode();
-   while (node != NULL)
-   {
-      node.Output();
-      node = GetNextNode();
-   }
+    CDOMObject *node;
+    node = GetFirstNode();
+    while (node != NULL)
+    {
+        node.Output();
+        node = GetNextNode();
+    }
 }
 //+------------------------------------------------------------------+

@@ -1,7 +1,7 @@
 //+------------------------------------------------------------------+
 //|                                                 StatusObject.mqh |
-//|                              Copyright 2014-2015, EarnForex.com. |
-//|                                         http://www.earnforex.com |
+//|                              Copyright 2014-2022, EarnForex.com. |
+//|                                        https://www.earnforex.com |
 //+------------------------------------------------------------------+
 #include <DOMObject.mqh>
 //+------------------------------------------------------------------+
@@ -11,6 +11,6 @@
 class CStatusObject : public CDOMObject
 {
 public:
-   CStatusObject(int t, double p, double v, _ENUM_ORDER_TYPE order_type, double order_sl, double order_tp):CDOMObject(t, p, v, order_type, order_sl, order_tp) {};
+                     CStatusObject(int t, double p, double v, _ENUM_ORDER_TYPE order_type, double order_sl, double order_tp): CDOMObject(t, p, v, order_type, order_sl, order_tp) {};
 };
 //+------------------------------------------------------------------+
