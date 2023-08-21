@@ -1,10 +1,11 @@
 ﻿//+------------------------------------------------------------------+
 //|                                               RiskCalculator.mq5 |
-//|                             Copyright © 2014-2022, EarnForex.com |
+//|                                  Copyright © 2023, EarnForex.com |
 //+------------------------------------------------------------------+
-#property copyright "Copyright © 2014-2022, EarnForex.com"
+#property copyright "Copyright © 2023, EarnForex.com"
 #property link      "https://www.earnforex.com/metatrader-indicators/Risk-Calculator/"
-#property version   "1.13"
+#property version   "1.14"
+#property icon      "\\Files\\EF-Icon-64x64px.ico"
 #property indicator_separate_window
 #property indicator_plots 0
 
@@ -26,16 +27,16 @@
 #include <OrderIterator.mqh>
 
 input group "Main"
-input bool   CalculateSpreads = true; // If true, potential loss due to spreads will become the part of the potential maximum loss.
-input bool   CalculateSwaps = true; // If true, accrued swaps will become the part of the potential maximum loss.
+input bool   CalculateSpreads = true; // CalculateSpreads: If true, potential loss due to spreads will become the part of the potential maximum loss.
+input bool   CalculateSwaps = true; // CalculateSwaps: If true, accrued swaps will become the part of the potential maximum loss.
 input double CommissionPerLot = 0; // Commission charged per lot (one side) in account currency.
-input bool   UseEquityInsteadOfBalance = false; // If true, Account Equity will be used instead of Account Balance.
-input bool   SeparatePendingOpenCalculation = false; // If true, calculate separate risk risk on pending orders and open positions.
+input bool   UseEquityInsteadOfBalance = false; // UseEquityInsteadOfBalance: If true, Account Equity will be used instead of Account Balance.
+input bool   SeparatePendingOpenCalculation = false; // SeparatePendingOpenCalculation: If true, calculate separate risk risk on pending orders and open positions.
 input group "Font"
 input color  cpFontColor = clrAzure; // Font color to output the currency pair names.
 input color  mnFontColor = clrPaleGoldenrod; // Font color to output the risk in money form.
 input color  pcFontColor = clrLimeGreen; // Font color to output the risk in percentage form.
-input color  hdFontColor = clrBlue; // Font color to output the headers when Reward is shown.
+input color  hdFontColor = clrLightBlue; // Font color to output the headers when Reward is shown.
 input string FontFace  = "Courier"; // Font name.
 input int    FontSize  = 8; // Font size.
 input group "Spacing"
@@ -44,6 +45,7 @@ input int    offsetX = 20; // Horizontal offset for output.
 input int    offsetY = 20; // Vertical offset for output.
 input group "Reward"
 input bool CalculateReward = false;
+input bool ShowRiskRewardRatio = false; // ShowRiskRewardRatio: works only if CalculateReward = true.
 
 // Main object for calculating minimum profit (maximum loss) with its static variables initialized.
 double COrderIterator::min_profit = UNDEFINED;
@@ -183,6 +185,8 @@ void CalculateRisk()
         ObjectSetInteger(0, "HeaderSymbol", OBJPROP_CORNER, 0);
         ObjectSetInteger(0, "HeaderSymbol", OBJPROP_XDISTANCE, offsetX);
         ObjectSetInteger(0, "HeaderSymbol", OBJPROP_YDISTANCE, offsetY);
+        ObjectSetInteger(0, "HeaderSymbol", OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, "HeaderSymbol", OBJPROP_HIDDEN, true);
 
         string risk_text = "Risk";
         if (SeparatePendingOpenCalculation) risk_text += " (Open Positions)";
@@ -194,6 +198,8 @@ void CalculateRisk()
         ObjectSetInteger(0, "HeaderRisk", OBJPROP_CORNER, 0);
         ObjectSetInteger(0, "HeaderRisk", OBJPROP_XDISTANCE, offsetX + 17 * w);
         ObjectSetInteger(0, "HeaderRisk", OBJPROP_YDISTANCE, offsetY);
+        ObjectSetInteger(0, "HeaderRisk", OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, "HeaderRisk", OBJPROP_HIDDEN, true);
 
         int x = 47;
         if (CalculateReward)
@@ -208,7 +214,23 @@ void CalculateRisk()
             ObjectSetInteger(0, "HeaderReward", OBJPROP_CORNER, 0);
             ObjectSetInteger(0, "HeaderReward", OBJPROP_XDISTANCE, offsetX + x * w);
             ObjectSetInteger(0, "HeaderReward", OBJPROP_YDISTANCE, offsetY);
+            ObjectSetInteger(0, "HeaderReward", OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, "HeaderReward", OBJPROP_HIDDEN, true);
             x += 28;
+            if (ShowRiskRewardRatio)
+            {
+                ObjectCreate(0, "HeaderRRR", OBJ_LABEL, Window, 0, 0);
+                ObjectSetString(0, "HeaderRRR", OBJPROP_TEXT, "RRR");
+                ObjectSetString(0, "HeaderRRR", OBJPROP_FONT, FontFace);
+                ObjectSetInteger(0, "HeaderRRR", OBJPROP_FONTSIZE, FontSize);
+                ObjectSetInteger(0, "HeaderRRR", OBJPROP_COLOR, hdFontColor);
+                ObjectSetInteger(0, "HeaderRRR", OBJPROP_CORNER, 0);
+                ObjectSetInteger(0, "HeaderRRR", OBJPROP_XDISTANCE, offsetX + x * w);
+                ObjectSetInteger(0, "HeaderRRR", OBJPROP_YDISTANCE, offsetY);
+                ObjectSetInteger(0, "HeaderRRR", OBJPROP_SELECTABLE, false);
+                ObjectSetInteger(0, "HeaderRRR", OBJPROP_HIDDEN, true);
+                x += 18;
+            }
         }
         if (SeparatePendingOpenCalculation)
         {
@@ -221,6 +243,8 @@ void CalculateRisk()
             ObjectSetInteger(0, "HeaderRiskPO", OBJPROP_CORNER, 0);
             ObjectSetInteger(0, "HeaderRiskPO", OBJPROP_XDISTANCE, offsetX + x * w);
             ObjectSetInteger(0, "HeaderRiskPO", OBJPROP_YDISTANCE, offsetY);
+            ObjectSetInteger(0, "HeaderRiskPO", OBJPROP_SELECTABLE, false);
+            ObjectSetInteger(0, "HeaderRiskPO", OBJPROP_HIDDEN, true);
             x += 28;
 
             if (CalculateReward)
@@ -234,6 +258,22 @@ void CalculateRisk()
                 ObjectSetInteger(0, "HeaderRewardPO", OBJPROP_CORNER, 0);
                 ObjectSetInteger(0, "HeaderRewardPO", OBJPROP_XDISTANCE, offsetX + x * w);
                 ObjectSetInteger(0, "HeaderRewardPO", OBJPROP_YDISTANCE, offsetY);
+                ObjectSetInteger(0, "HeaderRewardPO", OBJPROP_SELECTABLE, false);
+                ObjectSetInteger(0, "HeaderRewardPO", OBJPROP_HIDDEN, true);
+                x += 28;
+                if (ShowRiskRewardRatio)
+                {
+                    ObjectCreate(0, "HeaderRRRPO", OBJ_LABEL, Window, 0, 0);
+                    ObjectSetString(0, "HeaderRRRPO", OBJPROP_TEXT, "RRR");
+                    ObjectSetString(0, "HeaderRRRPO", OBJPROP_FONT, FontFace);
+                    ObjectSetInteger(0, "HeaderRRRPO", OBJPROP_FONTSIZE, FontSize);
+                    ObjectSetInteger(0, "HeaderRRRPO", OBJPROP_COLOR, hdFontColor);
+                    ObjectSetInteger(0, "HeaderRRRPO", OBJPROP_CORNER, 0);
+                    ObjectSetInteger(0, "HeaderRRRPO", OBJPROP_XDISTANCE, offsetX + x * w);
+                    ObjectSetInteger(0, "HeaderRRRPO", OBJPROP_YDISTANCE, offsetY);
+                    ObjectSetInteger(0, "HeaderRRRPO", OBJPROP_SELECTABLE, false);
+                    ObjectSetInteger(0, "HeaderRRRPO", OBJPROP_HIDDEN, true);
+                }
             }
         }
         Y++;
@@ -399,32 +439,32 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
             commission += CommissionPerLot * volume * 2;
             if ((ot == ORDER_TYPE_SELL_LIMIT) || (ot == ORDER_TYPE_SELL_STOP))
             {
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl - spread, tp == 0 ? 0 : tp - spread, Pending, 0, 0);
+                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl, tp == 0 ? 0 : tp, Pending, 0, 0);
                 OrderIterator.RO.Add(order);
             }
             else if ((ot == ORDER_TYPE_BUY_STOP) || (ot == ORDER_TYPE_BUY_LIMIT))
             {
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN) - spread, volume, Buy, sl, tp, Pending, 0, 0);
+                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Buy, sl, tp, Pending, 0, 0);
                 OrderIterator.RO.Add(order);
             }
             else if (ot == ORDER_TYPE_SELL_STOP_LIMIT)
             {
                 double stop_limit = OrderGetDouble(ORDER_PRICE_STOPLIMIT);
                 // Add stop-limit order.
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl - spread, tp == 0 ? 0 : tp - spread, StopLimit, 0, stop_limit);
+                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl, tp == 0 ? 0 : tp, StopLimit, 0, stop_limit);
                 OrderIterator.RO.Add(order);
                 // Add inactive limit order.
-                order = new CRemainingOrderObject(ticket, stop_limit, volume, Sell, sl == 0 ? 0 : sl - spread, tp == 0 ? 0 : tp - spread, Inactive, ticket, stop_limit);
+                order = new CRemainingOrderObject(ticket, stop_limit, volume, Sell, sl == 0 ? 0 : sl, tp == 0 ? 0 : tp, Inactive, ticket, stop_limit);
                 OrderIterator.RO.Add(order);
             }
             else if (ot == ORDER_TYPE_BUY_STOP_LIMIT)
             {
                 double stop_limit = OrderGetDouble(ORDER_PRICE_STOPLIMIT);
                 // Add stop-limit order.
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN) - spread, volume, Buy, sl, tp, StopLimit, 0, stop_limit - spread);
+                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Buy, sl, tp, StopLimit, 0, stop_limit - spread);
                 OrderIterator.RO.Add(order);
                 // Add inactive limit order.
-                order = new CRemainingOrderObject(ticket, stop_limit - spread, volume, Buy, sl, tp, Inactive, ticket, stop_limit);
+                order = new CRemainingOrderObject(ticket, stop_limit, volume, Buy, sl, tp, Inactive, ticket, stop_limit);
                 OrderIterator.RO.Add(order);
             }
         }
@@ -517,6 +557,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
 {
     string RiskOutput = "", SecondRiskOutput = "";
     double MoneyRisk = 0;
+    static double prev_Risk; // Will store the currency pair's risk for the next call of Output() to calculate and display the risk-to-reward ratio if necessary.
     if (COrderIterator::min_profit == UNDEFINED) RiskOutput = JustifyRight("Undefined", 25);
     else if (COrderIterator::min_profit == UNLIMITED) RiskOutput = JustifyRight("Unlimited", 25) +  " (" + DoubleToString(MathAbs(COrderIterator::max_sell_volume), 2) + " lot)";
     else
@@ -526,6 +567,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         MoneyRisk = -COrderIterator::min_profit * UnitCost / OnePoint - commission;
         if (mode == Reward) MoneyRisk = -MoneyRisk;
         if (CalculateSwaps) MoneyRisk -= swap;
+        if ((ShowRiskRewardRatio) && (mode == Risk)) prev_Risk = MoneyRisk;
         double Size;
         if (UseEquityInsteadOfBalance) Size = AccountInfoDouble(ACCOUNT_EQUITY);
         else Size = AccountInfoDouble(ACCOUNT_BALANCE);
@@ -533,7 +575,6 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         RiskOutput = JustifyRight(FormatNumber(DoubleToString(MoneyRisk, 2)) + " " + AccCurrency, 25);
         SecondRiskOutput = JustifyRight(DoubleToString(PercentageRisk, 2) + "%", 25);
     }
-
 
     int N = 0; // Offset multiplier.
     uint w, h;
@@ -551,6 +592,8 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         ObjectSetInteger(0, cp, OBJPROP_CORNER, 0);
         ObjectSetInteger(0, cp, OBJPROP_XDISTANCE, offsetX + N * w);
         ObjectSetInteger(0, cp, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, cp, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, cp, OBJPROP_HIDDEN, true);
     }
 
     if (mode == Risk) N = 0;
@@ -560,12 +603,13 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     }
     if (to == OnlyPending)
     {
-        if (mode == Risk) N = 60;
+        if (mode == Risk) N = 74;
         else
         {
-            N = 90;
+            N = 104;
         }
-        if (!CalculateReward) N -= 30;
+        if (!CalculateReward) N -= 30; // Move left if no reward columns.
+        else if (!ShowRiskRewardRatio) N -= 10; // Move left if no risk-to-reward ratio column.
     }
 
     string obj_name = cp + EnumToString(mode) + "Amount" + EnumToString(to);
@@ -577,6 +621,8 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     ObjectSetInteger(0, obj_name, OBJPROP_CORNER, 0);
     ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, offsetX + (N + 1) * w);
     ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+    ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
 
     if (SecondRiskOutput != "")
     {
@@ -589,6 +635,35 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         ObjectSetInteger(0, obj_name, OBJPROP_CORNER, 0);
         ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, offsetX + (N + 10) * w);
         ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
+    }
+
+    if ((ShowRiskRewardRatio) && (mode == Reward)) // Risk-to-reward ratio.
+    {
+        double RRR;
+        string RRROutput;
+
+        if (prev_Risk != 0)
+        {
+            RRR = MoneyRisk / prev_Risk; // At this stage, MoneyRisk holds the Reward amount (because mode == Reward).
+        }
+        else RRR = 0;
+
+        if (RRR == 0) RRROutput = "-.--";
+        else RRROutput = DoubleToString(RRR, 2);
+
+        obj_name = cp + "RRR" + EnumToString(to);
+        ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
+        ObjectSetString(0, obj_name, OBJPROP_TEXT, RRROutput);
+        ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
+        ObjectSetInteger(0, obj_name, OBJPROP_FONTSIZE, FontSize);
+        ObjectSetInteger(0, obj_name, OBJPROP_COLOR, mnFontColor);
+        ObjectSetInteger(0, obj_name, OBJPROP_CORNER, 0);
+        ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, offsetX + (N + 44) * w);
+        ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
     }
 
     if ((COrderIterator::min_profit != UNLIMITED) && (COrderIterator::min_profit != UNDEFINED)) return MoneyRisk;
@@ -602,6 +677,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
 void OutputTotalRisk(const double risk, const mode_of_operation mode, target_orders to = All)
 {
     string RiskOutput = "", SecondRiskOutput = "";;
+    static double prev_TotalRisk; // Will store the total risk for the next call of OutputTotalRisk() to calculate and display the risk-to-reward ratio if necessary.
     if (risk == 0)
     {
         if (mode == Risk) RiskOutput = JustifyRight("No risk.", 25);
@@ -618,6 +694,7 @@ void OutputTotalRisk(const double risk, const mode_of_operation mode, target_ord
         RiskOutput = JustifyRight(FormatNumber(DoubleToString(risk, 2)) + " " + AccCurrency, 25);
         SecondRiskOutput = JustifyRight(DoubleToString(PercentageRisk, 2) + "%", 25);
     }
+    if ((ShowRiskRewardRatio) && (mode == Risk)) prev_TotalRisk = risk;
 
     int N; // Offset multiplier.
     if (mode == Risk) N = 0;
@@ -627,12 +704,13 @@ void OutputTotalRisk(const double risk, const mode_of_operation mode, target_ord
     }
     if (to == OnlyPending)
     {
-        if (mode == Risk) N = 60;
+        if (mode == Risk) N = 74;
         else
         {
-            N = 90;
+            N = 104;
         }
-        if (!CalculateReward) N -= 30;
+        if (!CalculateReward) N -= 30; // Move left if no reward columns.
+        else if (!ShowRiskRewardRatio) N -= 10; // Move left if no risk-to-reward ratio column.
     }
 
     uint w, h;
@@ -642,14 +720,17 @@ void OutputTotalRisk(const double risk, const mode_of_operation mode, target_ord
 
     if ((mode == Risk) && (to != OnlyPending)) // No need to repeat the currency pair name when processing Reward or got to Pending orders in Separate mode.
     {
-        ObjectCreate(0, "Total", OBJ_LABEL, Window, 0, 0);
-        ObjectSetString(0, "Total", OBJPROP_TEXT, "Total");
-        ObjectSetString(0, "Total", OBJPROP_FONT, FontFace);
-        ObjectSetInteger(0, "Total", OBJPROP_FONTSIZE, FontSize);
-        ObjectSetInteger(0, "Total", OBJPROP_COLOR, cpFontColor);
-        ObjectSetInteger(0, "Total", OBJPROP_CORNER, 0);
-        ObjectSetInteger(0, "Total", OBJPROP_XDISTANCE, offsetX + N * w);
-        ObjectSetInteger(0, "Total", OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        string obj_name = "Total";
+        ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
+        ObjectSetString(0, obj_name, OBJPROP_TEXT, "Total");
+        ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
+        ObjectSetInteger(0, obj_name, OBJPROP_FONTSIZE, FontSize);
+        ObjectSetInteger(0, obj_name, OBJPROP_COLOR, cpFontColor);
+        ObjectSetInteger(0, obj_name, OBJPROP_CORNER, 0);
+        ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, offsetX + N * w);
+        ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
     }
     string obj_name = "TotalAmount" + EnumToString(mode) + EnumToString(to);
     ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
@@ -660,6 +741,8 @@ void OutputTotalRisk(const double risk, const mode_of_operation mode, target_ord
     ObjectSetInteger(0, obj_name, OBJPROP_CORNER, 0);
     ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, offsetX + (N + 1) * w);
     ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+    ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+    ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
 
     if ((SecondRiskOutput != "") && (risk != 0))
     {
@@ -672,6 +755,32 @@ void OutputTotalRisk(const double risk, const mode_of_operation mode, target_ord
         ObjectSetInteger(0, obj_name, OBJPROP_CORNER, 0);
         ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, offsetX + (N + 10) * w);
         ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
+    }
+
+    if ((ShowRiskRewardRatio) && (mode == Reward)) // Risk-to-reward ratio.
+    {
+        double RRR;
+        string RRROutput;
+
+        if ((prev_TotalRisk == UNLIMITED) || (prev_TotalRisk == UNDEFINED) || (prev_TotalRisk == 0) || (risk == UNLIMITED) || (risk == UNDEFINED)) RRR = 0;
+        else RRR = risk / prev_TotalRisk; // At this stage, risk holds the Reward amount (because mode == Reward).
+
+        if (RRR == 0) RRROutput = "-.--";
+        else RRROutput = DoubleToString(RRR, 2);
+
+        obj_name = "TotalRRR" + EnumToString(to);
+        ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
+        ObjectSetString(0, obj_name, OBJPROP_TEXT, RRROutput);
+        ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
+        ObjectSetInteger(0, obj_name, OBJPROP_FONTSIZE, FontSize);
+        ObjectSetInteger(0, obj_name, OBJPROP_COLOR, mnFontColor);
+        ObjectSetInteger(0, obj_name, OBJPROP_CORNER, 0);
+        ObjectSetInteger(0, obj_name, OBJPROP_XDISTANCE, offsetX + (N + 44) * w);
+        ObjectSetInteger(0, obj_name, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
     }
 }
 
