@@ -1,10 +1,10 @@
 ﻿//+------------------------------------------------------------------+
 //|                                               RiskCalculator.mq5 |
-//|                                  Copyright © 2023, EarnForex.com |
+//|                                  Copyright © 2025, EarnForex.com |
 //+------------------------------------------------------------------+
-#property copyright "Copyright © 2023, EarnForex.com"
+#property copyright "Copyright © 2025, EarnForex.com"
 #property link      "https://www.earnforex.com/metatrader-indicators/Risk-Calculator/"
-#property version   "1.14"
+#property version   "1.15"
 #property icon      "\\Files\\EF-Icon-64x64px.ico"
 #property indicator_separate_window
 #property indicator_plots 0
@@ -46,6 +46,11 @@ input int    offsetY = 20; // Vertical offset for output.
 input group "Reward"
 input bool CalculateReward = false;
 input bool ShowRiskRewardRatio = false; // ShowRiskRewardRatio: works only if CalculateReward = true.
+input group "Stop-out level"
+input bool  CalculateStopOutLevel = false; // CalculateStopOutLevel: If true, stop-out price will be calculated.
+input color StopOutLineColor = clrDarkGray;
+input int StopOutLineWidth = 1;
+input ENUM_LINE_STYLE StopOutLineStyle = STYLE_DASH;
 
 // Main object for calculating minimum profit (maximum loss) with its static variables initialized.
 double COrderIterator::min_profit = UNDEFINED;
@@ -73,6 +78,11 @@ double total_reward;
 // These will be needed only if SeparatePendingOpenCalculation is true.
 double total_risk_po;
 double total_reward_po;
+// Will need the array to store currency pairs that have been already processed.
+string CP_Processed[];
+// Stop-out level information.
+ENUM_ACCOUNT_STOPOUT_MODE SO_Mode;
+double SO_Level;
 
 #ifdef _DEBUG
 bool single_run = false;
@@ -90,10 +100,16 @@ enum target_orders
 //+------------------------------------------------------------------+
 //| Initialization function.                                         |
 //+------------------------------------------------------------------+
-void OnInit()
+int OnInit()
 {
     IndicatorSetString(INDICATOR_SHORTNAME, "Risk Calculator");
+
+    SO_Mode = (ENUM_ACCOUNT_STOPOUT_MODE)AccountInfoInteger(ACCOUNT_MARGIN_SO_MODE);
+    SO_Level = AccountInfoDouble(ACCOUNT_MARGIN_SO_SO);
+
     EventSetTimer(1);
+
+    return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
@@ -103,6 +119,8 @@ void OnDeinit(const int reason)
 {
     EventKillTimer();
     ObjectsDeleteAll(0, Window, OBJ_LABEL);
+    ObjectDelete(0, "StopOutLineAbove");
+    ObjectDelete(0, "StopOutLineBelow");
     ChartRedraw();
 }
 
@@ -125,7 +143,7 @@ int OnCalculate(const int rates_total,      // size of the price[] array
 
     CalculateRisk();
 
-    return 0;
+    return rates_total;
 }
 
 //+------------------------------------------------------------------+
@@ -160,7 +178,6 @@ void CalculateRisk()
 #endif
 
     if (Window == -1) Window = ChartWindowFind();
-    ObjectsDeleteAll(0, Window, OBJ_LABEL);
 
     Y = 0;
 
@@ -168,8 +185,6 @@ void CalculateRisk()
     total_reward = 0;
     total_risk_po = 0;
     total_reward_po = 0;
-
-    ObjectsDeleteAll(0, Window, OBJ_LABEL);
 
     if ((CalculateReward) || (SeparatePendingOpenCalculation)) // Need headers only if Reward information is displayed or separate pending/positions count is used.
     {
@@ -279,12 +294,51 @@ void CalculateRisk()
         Y++;
     }
 
+    // Preliminary run to remove unused chart objects for currency pairs without orders.
+    int total_cp_processed = ArraySize(CP_Processed);
+    int total_orders = OrdersTotal();
+    for (int j = 0; j < total_cp_processed; j++)
+    {
+        bool found = false;
+        // Start with positions, because it's very simple.
+        if (PositionSelect(CP_Processed[j]))
+        {
+            found = true;
+        }
+        // If no position found, proceed to checking orders.
+        if (!found)
+        {
+            // Check orders first.
+            for (int i = 0; i < total_orders; i++)
+            {
+                if (!OrderSelect(OrderGetTicket(i))) return; // Couldn't select order.
+                string cp = OrderGetString(ORDER_SYMBOL);
+                if (CP_Processed[j] == cp)
+                {
+                    found = true;
+                    break;
+                }
+            }
+            // If a currency pair from the array is absent from both orders and positions.
+            if (!found)
+            {
+                // Delete the line with the pair. Other lines will be moved during the respective processing stage.
+                ObjectsDeleteAll(0, CP_Processed[j] + "_RC_", Window, OBJ_LABEL);
+            }
+        }
+    }
+
+    // Reset the currency pairs array.
+    ArrayResize(CP_Processed, 0);
+
+    bool do_not_delete_so_lines = false; // Will be used further to delete unneeded stop-out lines if CalculateStopOutLevel is true.
     // Orders.
     total = OrdersTotal();
     for (int i = 0; i < total; i++)
     {
         if (!OrderSelect(OrderGetTicket(i))) continue;
         CheckCurrencyPair(OrderGetString(ORDER_SYMBOL));
+        if (OrderGetString(ORDER_SYMBOL) == Symbol()) do_not_delete_so_lines = true;
     }
 
     // Positions.
@@ -293,6 +347,14 @@ void CalculateRisk()
     {
         if (!PositionSelect(PositionGetSymbol(i))) continue;
         CheckCurrencyPair(PositionGetString(POSITION_SYMBOL));
+        if (PositionGetString(POSITION_SYMBOL) == Symbol()) do_not_delete_so_lines = true;
+    }
+
+    // Delete leftover stop-out lines if there are no positions or orders in  the current symbol.
+    if ((CalculateStopOutLevel) && (!do_not_delete_so_lines))
+    {
+        ObjectDelete(0, "StopOutLineAbove");
+        ObjectDelete(0, "StopOutLineBelow");
     }
 
     Y++;
@@ -324,8 +386,21 @@ void CalculateRisk()
 //+-----------------------------------------------------------------------------------------+
 void CheckCurrencyPair(const string cp)
 {
-    // This currency pair has already been processed - there is a TEXT_LABEL with its name.
-    if (ObjectFind(0, cp) > 0) return;
+    // Check if the currency pair has already been processed.
+    bool already_processed = false;
+    int total_cp_processed = ArraySize(CP_Processed);
+    for (int j = 0; j < total_cp_processed; j++)
+    {
+        if (CP_Processed[j] == cp)
+        {
+            already_processed = true;
+            break;
+        }
+    }
+    if (already_processed) return; // No need to proceed as it has already been processed.
+    // Add new currency pair to the processed array.
+    ArrayResize(CP_Processed, total_cp_processed + 1, 10);
+    CP_Processed[total_cp_processed] = cp;
 
     if (!SeparatePendingOpenCalculation)
     {
@@ -412,6 +487,7 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
     COrderIterator::max_sell_volume = 0;
     OrderIterator = new COrderIterator();
     OrderIterator.mode = mode;
+    OrderIterator.point = SymbolInfoDouble(cp, SYMBOL_POINT);
 
     CDOMObject *order;
 
@@ -540,6 +616,24 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
 
     OrderIterator.current_price = SymbolInfoDouble(cp, SYMBOL_BID);
 
+    if (((to == All) || (to == OnlyPositions)) && (CalculateStopOutLevel) && (cp == Symbol()))
+    {
+        // Create a copy, which will be used only for Stop-Out Level search.
+        COrderIterator* SO_Finder;
+        if (COrderIterator::hedging) SO_Finder = new COrderIterator(OrderIterator.StatusHedging, OrderIterator.RO, OrderIterator.current_price, AccountInfoDouble(ACCOUNT_EQUITY));
+        else SO_Finder = new COrderIterator(OrderIterator.Status, OrderIterator.RO, OrderIterator.current_price, AccountInfoDouble(ACCOUNT_EQUITY));
+        SO_Finder.point = SymbolInfoDouble(cp, SYMBOL_POINT);
+        double SO_Above = SO_Finder.FindStopOutAbove();
+        delete SO_Finder;
+        // Restart for the below side because the order lists (Status/RO) will be incomplete after the run for the above side.
+        if (COrderIterator::hedging) SO_Finder = new COrderIterator(OrderIterator.StatusHedging, OrderIterator.RO, OrderIterator.current_price, AccountInfoDouble(ACCOUNT_EQUITY));
+        else SO_Finder = new COrderIterator(OrderIterator.Status, OrderIterator.RO, OrderIterator.current_price, AccountInfoDouble(ACCOUNT_EQUITY));
+        SO_Finder.point = SymbolInfoDouble(cp, SYMBOL_POINT);
+        double SO_Below = SO_Finder.FindStopOutBelow();
+        delete SO_Finder;
+        DrawSOLevels(SO_Above, SO_Below);
+    }
+
     OrderIterator.Iterate(UNDEFINED);
 
     delete OrderIterator;
@@ -562,9 +656,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     else if (COrderIterator::min_profit == UNLIMITED) RiskOutput = JustifyRight("Unlimited", 25) +  " (" + DoubleToString(MathAbs(COrderIterator::max_sell_volume), 2) + " lot)";
     else
     {
-        double UnitCost = CalculateUnitCost(cp, mode);
-        double OnePoint = SymbolInfoDouble(cp, SYMBOL_POINT);
-        MoneyRisk = -COrderIterator::min_profit * UnitCost / OnePoint - commission;
+        MoneyRisk = -COrderIterator::min_profit * PointValue(cp, mode) - commission;
         if (mode == Reward) MoneyRisk = -MoneyRisk;
         if (CalculateSwaps) MoneyRisk -= swap;
         if ((ShowRiskRewardRatio) && (mode == Risk)) prev_Risk = MoneyRisk;
@@ -572,7 +664,9 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         if (UseEquityInsteadOfBalance) Size = AccountInfoDouble(ACCOUNT_EQUITY);
         else Size = AccountInfoDouble(ACCOUNT_BALANCE);
         double PercentageRisk = (MoneyRisk / Size) * 100;
+        if (MoneyRisk == 0) MoneyRisk = 0; // This abomination is required to avoid "negative zeros" because apparently -0.0 is possible in MetaTrader and is preserved by DoubleToString in MQL5 (but not in MQL4).
         RiskOutput = JustifyRight(FormatNumber(DoubleToString(MoneyRisk, 2)) + " " + AccCurrency, 25);
+        if (PercentageRisk == 0) PercentageRisk = 0; // This abomination is required to avoid "negative zeros" because apparently -0.0 is possible in MetaTrader and is preserved by DoubleToString in MQL5 (but not in MQL4).
         SecondRiskOutput = JustifyRight(DoubleToString(PercentageRisk, 2) + "%", 25);
     }
 
@@ -582,18 +676,20 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     TextGetSize("A", w, h);
     h++;
 
+    string cp_suffixed = cp + "_RC_";
+
     if (mode == Risk) // No need to repeat the currency pair name when processing Reward.
     {
-        ObjectCreate(0, cp, OBJ_LABEL, Window, 0, 0);
-        ObjectSetString(0, cp, OBJPROP_TEXT, cp);
-        ObjectSetString(0, cp, OBJPROP_FONT, FontFace);
-        ObjectSetInteger(0, cp, OBJPROP_FONTSIZE, FontSize);
-        ObjectSetInteger(0, cp, OBJPROP_COLOR, cpFontColor);
-        ObjectSetInteger(0, cp, OBJPROP_CORNER, 0);
-        ObjectSetInteger(0, cp, OBJPROP_XDISTANCE, offsetX + N * w);
-        ObjectSetInteger(0, cp, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
-        ObjectSetInteger(0, cp, OBJPROP_SELECTABLE, false);
-        ObjectSetInteger(0, cp, OBJPROP_HIDDEN, true);
+        ObjectCreate(0, cp_suffixed, OBJ_LABEL, Window, 0, 0);
+        ObjectSetString(0, cp_suffixed, OBJPROP_TEXT, cp);
+        ObjectSetString(0, cp_suffixed, OBJPROP_FONT, FontFace);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_FONTSIZE, FontSize);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_COLOR, cpFontColor);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_CORNER, 0);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_XDISTANCE, offsetX + N * w);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_HIDDEN, true);
     }
 
     if (mode == Risk) N = 0;
@@ -612,7 +708,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         else if (!ShowRiskRewardRatio) N -= 10; // Move left if no risk-to-reward ratio column.
     }
 
-    string obj_name = cp + EnumToString(mode) + "Amount" + EnumToString(to);
+    string obj_name = cp_suffixed + EnumToString(mode) + "Amount" + EnumToString(to);
     ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
     ObjectSetString(0, obj_name, OBJPROP_TEXT, RiskOutput);
     ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
@@ -626,7 +722,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
 
     if (SecondRiskOutput != "")
     {
-        obj_name = cp + EnumToString(mode) + "Percentage" + EnumToString(to);
+        obj_name = cp_suffixed + EnumToString(mode) + "Percentage" + EnumToString(to);
         ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
         ObjectSetString(0, obj_name, OBJPROP_TEXT, SecondRiskOutput);
         ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
@@ -638,6 +734,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
         ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
     }
+    else ObjectDelete(0, cp_suffixed + EnumToString(mode) + "Percentage" + EnumToString(to));
 
     if ((ShowRiskRewardRatio) && (mode == Reward)) // Risk-to-reward ratio.
     {
@@ -653,7 +750,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         if (RRR == 0) RRROutput = "-.--";
         else RRROutput = DoubleToString(RRR, 2);
 
-        obj_name = cp + "RRR" + EnumToString(to);
+        obj_name = cp_suffixed + "RRR" + EnumToString(to);
         ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
         ObjectSetString(0, obj_name, OBJPROP_TEXT, RRROutput);
         ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
@@ -758,6 +855,7 @@ void OutputTotalRisk(const double risk, const mode_of_operation mode, target_ord
         ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
         ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
     }
+    else ObjectDelete(0, "TotalPercentage" + EnumToString(mode) + EnumToString(to)); // Avoid left-over objects.
 
     if ((ShowRiskRewardRatio) && (mode == Reward)) // Risk-to-reward ratio.
     {
@@ -950,5 +1048,41 @@ double GetCurrencyCorrectionCoefficient(MqlTick &tick, const mode_of_operation m
         }
     }
     return -1;
+}
+
+double PointValue(const string cp, const mode_of_operation mode)
+{
+    double UnitCost = CalculateUnitCost(cp, mode);
+    double OnePoint = SymbolInfoDouble(cp, SYMBOL_POINT);
+    return(UnitCost / OnePoint);
+}
+
+void DrawSOLevels(double SO_Above, double SO_Below)
+{
+    string name;
+    if ((SO_Above > 0) && (SO_Above != DBL_MAX))
+    {
+        name = "StopOutLineAbove";
+        if (ObjectFind(0, name) < 0) ObjectCreate(0, name, OBJ_HLINE, 0, 0, 0);
+        ObjectSetDouble(0, name, OBJPROP_PRICE, 0, SO_Above);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, StopOutLineColor);
+        ObjectSetInteger(0, name, OBJPROP_STYLE, StopOutLineStyle);
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, StopOutLineWidth);
+        ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, name, OBJPROP_BACK, true);
+    }
+    else ObjectDelete(0, "StopOutLineAbove");
+    if ((SO_Below > 0) && (SO_Below != DBL_MAX))
+    {
+        name = "StopOutLineBelow";
+        if (ObjectFind(0, name) < 0) ObjectCreate(0, name, OBJ_HLINE, 0, 0, 0);
+        ObjectSetDouble(0, name, OBJPROP_PRICE, 0, SO_Below);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, StopOutLineColor);
+        ObjectSetInteger(0, name, OBJPROP_STYLE, StopOutLineStyle);
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, StopOutLineWidth);
+        ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, name, OBJPROP_BACK, true);
+    }
+    else ObjectDelete(0, "StopOutLineBelow");
 }
 //+------------------------------------------------------------------+

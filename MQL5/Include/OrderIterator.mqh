@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                                OrderIterator.mqh |
-//|                               Copyright 2015-2022, EarnForex.com |
+//|                               Copyright 2015-2025, EarnForex.com |
 //|                                       https://www.earnforex.com/ |
 //+------------------------------------------------------------------+
 #include <OrderMap.mqh>
@@ -37,6 +37,12 @@ public:
     bool             skip_below;
     double           op_above;
     double           op_below;
+    double           point; // Need the symbol's point to accurately compare doubles.
+
+// For stop-out level price calculation:
+    double           current_equity;
+    double           other_symbols_margin;
+    double           current_used_margin;
 
                      COrderIterator(CStatusObject *input_Status, COrderMap &input_RO, double input_current_price, double input_unrealized_profit, double input_realized_profit, mode_of_operation input_mode);
                      COrderIterator(COrderMap *input_Status, COrderMap &input_RO, double input_current_price, double input_unrealized_profit, double input_realized_profit, mode_of_operation input_mode);
@@ -48,6 +54,8 @@ public:
         }
         RO = new COrderMap;
     }
+                     COrderIterator(CStatusObject *input_Status, COrderMap &input_RO, double input_current_price, double input_current_equity); // For stop-out level price calculation (netting).
+                     COrderIterator(COrderMap *input_Status, COrderMap &input_RO, double input_current_price, double input_current_equity); // For stop-out level price calculation (hedging).
                     ~COrderIterator(void);
 
     void             Iterate(double order_price);
@@ -55,12 +63,12 @@ public:
     void             CheckPairedOrders();
     double           FindPriceAbove();
     double           FindPriceBelow();
-    void             ProcessOrder(double order_price);
+    void             ProcessOrder(double order_price, const bool for_stop_out = false);
     void             CalculateMaxUp();
     void             CalculateMaxDown();
     void             AddExecutedOrderToStatus(CRemainingOrderObject &RO_order);
     void             RemoveOrderFromRO(CRemainingOrderObject &RO_order);
-    void             RemoveOrderFromStatus(CRemainingOrderObject *RO_order);
+    void             RemoveOrderFromStatus(CRemainingOrderObject &RO_order, const bool for_stop_out = false);
     void             CalculateUnrealizedProfit();
     void             AddSLTPtoRO(CRemainingOrderObject &RO_order);
     void             AddBasicSLTPtoRO(double price, ulong origin);
@@ -71,6 +79,15 @@ public:
     void             RemoveCurrentSL();
     void             RemoveCurrentTP();
     void             RemoveSecondExit(double price);
+
+    // Stop-out calculations:
+    void             CalculateMarginInOtherSymbols();
+    double           FindStopOutAbove();
+    double           FindStopOutBelow();
+    double           CalculateStopOut(bool up);
+    void             RecalculateCurrentEquity(double new_price);
+    void             RecalculateCurrentUsedMargin();
+    double           CalculateStatusMargin();
 };
 
 //+------------------------------------------------------------------+
@@ -135,6 +152,58 @@ COrderIterator::COrderIterator(COrderMap *input_Status, COrderMap &input_RO, dou
 }
 
 //+------------------------------------------------------------------+
+//| Constructor for stop-out level price calculation (netting).      |
+//+------------------------------------------------------------------+
+COrderIterator::COrderIterator(CStatusObject *input_Status, COrderMap &input_RO, double input_current_price, double input_current_equity)
+{
+    RO = new COrderMap;
+    CDOMObject *order, *new_order;
+
+    if (CheckPointer(input_Status) != POINTER_INVALID) Status = new CStatusObject(input_Status.Price(), input_Status.Vol(), input_Status.Type(), input_Status.SL(), input_Status.TP());
+    else Status = NULL;
+
+    for (order = input_RO.GetFirstNode(); order != NULL; order = input_RO.GetNextNode())
+    {
+        new_order = new CRemainingOrderObject(order.Ticket(), order.Price(), order.Vol(), order.Type(), order.SL(), order.TP(), order.Status(), order.Origin(), order.StopLimit());
+        RO.Add(new_order);
+    }
+
+    current_price = input_current_price;
+    current_equity = input_current_equity;
+    op_above = UNDEFINED;
+    op_below = UNDEFINED;
+    current_used_margin = 0;
+}
+
+//+------------------------------------------------------------------+
+//| Constructor for stop-out level price calculation (hedging).      |
+//+------------------------------------------------------------------+
+COrderIterator::COrderIterator(COrderMap *input_Status, COrderMap &input_RO, double input_current_price, double input_current_equity)
+{
+    RO = new COrderMap;
+    StatusHedging = new COrderMap;
+    CDOMObject *order, *new_order;
+
+    for (order = input_Status.GetFirstNode(); order != NULL; order = input_Status.GetNextNode())
+    {
+        new_order = new CStatusObject(order.Ticket(), order.Price(), order.Vol(), order.Type(), order.SL(), order.TP());
+        StatusHedging.Add(new_order);
+    }
+
+    for (order = input_RO.GetFirstNode(); order != NULL; order = input_RO.GetNextNode())
+    {
+        new_order = new CRemainingOrderObject(order.Ticket(), order.Price(), order.Vol(), order.Type(), order.SL(), order.TP(), order.Status(), order.Origin(), order.StopLimit());
+        RO.Add(new_order);
+    }
+
+    current_price = input_current_price;
+    current_equity = input_current_equity;
+    op_above = UNDEFINED;
+    op_below = UNDEFINED;
+    current_used_margin = 0;
+}
+
+//+------------------------------------------------------------------+
 //| Destructor                                                       |
 //+------------------------------------------------------------------+
 COrderIterator::~COrderIterator(void)
@@ -194,6 +263,7 @@ void COrderIterator::Iterate(const double order_price)
             COrderIterator *OI_new_a;
             if (!hedging) OI_new_a = new COrderIterator(Status, RO, current_price, unrealized_profit, realized_profit, mode);
             else OI_new_a = new COrderIterator(StatusHedging, RO, current_price, unrealized_profit, realized_profit, mode);
+            OI_new_a.point = point;
             OI_new_a.Iterate(op_above);
             delete OI_new_a;
         }
@@ -212,6 +282,7 @@ void COrderIterator::Iterate(const double order_price)
             COrderIterator *OI_new_b;
             if (!hedging) OI_new_b = new COrderIterator(Status, RO, current_price, unrealized_profit, realized_profit, mode);
             else OI_new_b = new COrderIterator(StatusHedging, RO, current_price, unrealized_profit, realized_profit, mode);
+            OI_new_b.point = point;
             OI_new_b.Iterate(op_below);
             delete OI_new_b;
         }
@@ -237,7 +308,7 @@ bool COrderIterator::CheckSimplicity()
     CRemainingOrderObject *RO_order;
     CStatusObject *Status_order;
     int types_found = 0; // 0 - none, 1 - buy, 2 - sell, 3 - both.
-    for (RO_order = RO.GetFirstNodeAtPrice(op_above); (RO_order != NULL) && (RO_order.Price() == op_above); RO_order = RO.GetNextNode())
+    for (RO_order = RO.GetFirstNodeAtPrice(op_above); (RO_order != NULL) && (MathAbs(RO_order.Price() - op_above) < point / 2); RO_order = RO.GetNextNode())
     {
         // If order is an SL or a TP of some other order, check if its origin has a TP or an SL in the op_below price.
         if (RO_order.Status() == SLTP)
@@ -257,7 +328,7 @@ bool COrderIterator::CheckSimplicity()
                 Status_order = Status;
             }
             // Partner SL/TP found - the situation is not simple.
-            if ((Status_order.TP() == op_below) || (Status_order.SL() == op_below)) return false;
+            if ((MathAbs(Status_order.TP() - op_below) < point / 2) || (MathAbs(Status_order.SL() - op_below) < point / 2)) return false;
         }
         else if (RO_order.Status() == Pending)
         {
@@ -279,7 +350,7 @@ bool COrderIterator::CheckSimplicity()
             if ((RO_order.StopLimit() <= op_above) && (RO_order.StopLimit() >= op_below)) return false;
         }
     }
-    for (RO_order = RO.GetFirstNodeAtPrice(op_below); (RO_order != NULL) && (RO_order.Price() == op_below); RO_order = RO.GetNextNode())
+    for (RO_order = RO.GetFirstNodeAtPrice(op_below); (RO_order != NULL) && (MathAbs(RO_order.Price() - op_below) < point / 2); RO_order = RO.GetNextNode())
     {
         if (RO_order.Status() == Pending)
         {
@@ -317,7 +388,7 @@ void COrderIterator::CheckPairedOrders()
     double min_profit_below = 0; // Serves as max_profit_below for mode == Reward.
     skip_above = false;
     skip_below = false;
-    for (RO_order = RO.GetFirstNodeAtPrice(op_above); (RO_order != NULL) && (RO_order.Price() == op_above); RO_order = RO.GetNextNode())
+    for (RO_order = RO.GetFirstNodeAtPrice(op_above); (RO_order != NULL) && (MathAbs(RO_order.Price() - op_above) < point / 2); RO_order = RO.GetNextNode())
     {
         if (RO_order.Status() == SLTP)
         {
@@ -336,7 +407,7 @@ void COrderIterator::CheckPairedOrders()
                 Status_order = Status;
             }
 
-            if ((Status_order.TP() == op_below) || (Status_order.SL() == op_below))
+            if ((MathAbs(Status_order.TP() - op_below) < point / 2) || (MathAbs(Status_order.SL() - op_below) < point / 2))
             {
                 if (hedging) same_order_sl_tp = true;
                 if (Status_order.Type() == Sell)
@@ -350,38 +421,38 @@ void COrderIterator::CheckPairedOrders()
         else if (RO_order.Status() == Inactive) return; // Any other order (except Inactive) would make it a much more difficult case.
     }
     // Do the same for lower orders only if upper did not fail.
-    if (same_order_sl_tp) for (RO_order = RO.GetFirstNodeAtPrice(op_below); (RO_order != NULL) && (RO_order.Price() == op_below); RO_order = RO.GetNextNode())
+    if (same_order_sl_tp) for (RO_order = RO.GetFirstNodeAtPrice(op_below); (RO_order != NULL) && (MathAbs(RO_order.Price() - op_below) < point / 2); RO_order = RO.GetNextNode())
+    {
+        if (RO_order.Status() == SLTP)
         {
-            if (RO_order.Status() == SLTP)
+            if (hedging)
             {
-                if (hedging)
+                ticket = RO_order.Origin();
+                Status_order = StatusHedging.GetNodeByTicket(ticket);
+                if (Status_order == NULL)
                 {
-                    ticket = RO_order.Origin();
-                    Status_order = StatusHedging.GetNodeByTicket(ticket);
-                    if (Status_order == NULL)
-                    {
-                        Print(__LINE__, " Error - origin order not found by ticket.");
-                        return;
-                    }   // Partner SL/TP found.
-                }
-                else
-                {
-                    Status_order = Status;
-                }
-
-                if ((Status_order.TP() == op_above) || (Status_order.SL() == op_above))
-                {
-                    // Lower order can only be an SL for a Buy.
-                    if (Status_order.Type() == Buy)
-                        min_profit_below += op_below - Status_order.Price();
-                    // Lower order can only be a TP for a Sell.
-                    else if (Status_order.Type() == Sell)
-                        min_profit_below += Status_order.Price() - op_below;
-                }
-                else return; // SL/TP without a counterpart at op_above is a different case.
+                    Print(__LINE__, " Error - origin order not found by ticket.");
+                    return;
+                }   // Partner SL/TP found.
             }
-            else if (RO_order.Status() == Inactive) return; // Any other order (except Inactive) would make it a much more difficult case.
+            else
+            {
+                Status_order = Status;
+            }
+
+            if ((MathAbs(Status_order.TP() - op_above) < point / 2) || (MathAbs(Status_order.SL() - op_above) < point / 2))
+            {
+                // Lower order can only be an SL for a Buy.
+                if (Status_order.Type() == Buy)
+                    min_profit_below += op_below - Status_order.Price();
+                // Lower order can only be a TP for a Sell.
+                else if (Status_order.Type() == Sell)
+                    min_profit_below += Status_order.Price() - op_below;
+            }
+            else return; // SL/TP without a counterpart at op_above is a different case.
         }
+        else if (RO_order.Status() == Inactive) return; // Any other order (except Inactive) would make it a much more difficult case.
+    }
     // We can now calculate the optimal direction.
     if (same_order_sl_tp)
     {
@@ -421,7 +492,7 @@ double COrderIterator::FindPriceAbove()
         {
             // Switched to true only if it is new price.
             // Otherwise remains the same as it was before lest it changes to true when there were non-Inactive orders before on that price.
-            if (prev_price != RO_order.Price()) all_orders_are_inactive = true;
+            if (MathAbs(prev_price - RO_order.Price()) > point / 2) all_orders_are_inactive = true;
         }
         else
         {
@@ -459,21 +530,22 @@ double COrderIterator::FindPriceBelow()
 // Actually, it is more of a ProcessPrice().
 // In MT5, it is necessary to process orders in certain order (sic!):
 //  First - SL/TP.
-//  Second - pending orders in order of ascending ticket - i.e. old first (FIFO). In this simulator, it is order by j ascending.
-void COrderIterator::ProcessOrder(double order_price)
+//  Second - pending orders in order of ascending ticket - i.e. old first (FIFO). In this simulator, it is ordered by j ascending.
+// for_stop_out - whether calculations pertinent to stop-out level price are necessary.
+void COrderIterator::ProcessOrder(double order_price, const bool for_stop_out = false)
 {
     if (!hedging) // Netting mode.
     {
         // First, do SL/TP if needed.
         if (CheckPointer(Status) != POINTER_INVALID)
         {
-            if ((Status.SL() == order_price) || (Status.TP() == order_price))
+            if ((MathAbs(Status.SL() - order_price) < point / 2) || (MathAbs(Status.TP() - order_price) < point / 2))
             {
-                for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(order_price); (RO_order != NULL) && (RO_order.Price() == order_price); RO_order = RO.GetNextNode())
+                for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(order_price); (RO_order != NULL) && (MathAbs(RO_order.Price() - order_price) < point / 2); RO_order = RO.GetNextNode())
                 {
                     if (RO_order.Status() == SLTP)
                     {
-                        RemoveOrderFromStatus(RO_order);
+                        RemoveOrderFromStatus(RO_order, for_stop_out);
                         RemoveOrderFromRO(RO_order);
                         break;
                     }
@@ -483,7 +555,7 @@ void COrderIterator::ProcessOrder(double order_price)
     }
 
     // Second, cycle through all the remaining orders at a given price.
-    for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(order_price); (RO_order != NULL) && (RO_order.Price() == order_price); ) // Cycle movement is defined inside the cycle.
+    for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(order_price); (RO_order != NULL) && (MathAbs(RO_order.Price() - order_price) < point / 2); ) // Cycle movement is defined inside the cycle.
     {
         // If this is called, we need RO.GetNextNode() in the cycle, otherwise RO.GetCurrentNode() because the order gets deleted and the list is shifted.
         if (RO_order.Status() == Inactive)
@@ -502,7 +574,7 @@ void COrderIterator::ProcessOrder(double order_price)
             Print("Calling RemoveOrderFromStatus(RO_order) for: ", RO_order.Origin());
 #endif
             // Also calculates realized profit.
-            RemoveOrderFromStatus(RO_order);
+            RemoveOrderFromStatus(RO_order, for_stop_out);
 #ifdef _DEBUG
             Print("Done calling RemoveOrderFromStatus(RO_order) for: ", RO_order.Origin());
 #endif
@@ -512,11 +584,21 @@ void COrderIterator::ProcessOrder(double order_price)
             // Open new order, pushing it to Status, removing old SL/TP entries if needed and adding new SL/TP entries to RO if needed.
             // Sorts RO if needed.
             AddExecutedOrderToStatus(RO_order);
+            if (for_stop_out)
+            {
+                // Recalculate used margin based on the new Status.
+                RecalculateCurrentUsedMargin();
+            }
         }
         // Removes order from RO.
         RemoveOrderFromRO(RO_order);
         // We need RO.GetCurrentNode() in the cycle, because the order gets deleted and the list is shifted.
         RO_order = RO.GetCurrentNode();
+    }
+    if (for_stop_out)
+    {
+        // Recalculate equity based on the new Status and new current price.
+        RecalculateCurrentEquity(order_price);
     }
     // Switch current price.
     current_price = order_price;
@@ -638,13 +720,13 @@ void COrderIterator::AddExecutedOrderToStatus(CRemainingOrderObject &RO_order)
         // Same type - update SL/TP, price, and volume.
         else if (Status.Type() == RO_order.Type())
         {
-            if (Status.SL() != RO_order.SL())
+            if (MathAbs(Status.SL() - RO_order.SL()) > point / 2)
             {
                 RemoveCurrentSL();
                 Status.SetSL(RO_order.SL());
                 if (Status.SL() != 0) AddBasicSLTPtoRO(Status.SL());
             }
-            if (Status.TP() != RO_order.TP())
+            if (MathAbs(Status.TP() - RO_order.TP()) > point / 2)
             {
                 RemoveCurrentTP();
                 Status.SetTP(RO_order.TP());
@@ -743,7 +825,7 @@ void COrderIterator::RemoveCurrentSL()
     // At this point all existing "sltp" orders in RO are SL/TP of the current position.
     if (Status.SL() != 0)
     {
-        for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(Status.SL()); (RO_order != NULL) && (RO_order.Price() == Status.SL()); RO_order = RO.GetNextNode())
+        for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(Status.SL()); (RO_order != NULL) && (MathAbs(RO_order.Price() - Status.SL()) < point / 2); RO_order = RO.GetNextNode())
         {
             if (RO_order.Status() == SLTP)
             {
@@ -760,7 +842,7 @@ void COrderIterator::RemoveCurrentTP()
     // At this point all existing "sltp" orders in RO are SL/TP of the current position.
     if (Status.TP() != 0)
     {
-        for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(Status.TP()); (RO_order != NULL) && (RO_order.Price() == Status.TP()); RO_order = RO.GetNextNode())
+        for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(Status.TP()); (RO_order != NULL) && (MathAbs(RO_order.Price() - Status.TP()) < point / 2); RO_order = RO.GetNextNode())
         {
             if (RO_order.Status() == SLTP)
             {
@@ -772,11 +854,18 @@ void COrderIterator::RemoveCurrentTP()
 }
 
 // Remove an RO_order's origin from the Status array and Second exit from RO (if necessary).
-void COrderIterator::RemoveOrderFromStatus(CRemainingOrderObject *RO_order)
+void COrderIterator::RemoveOrderFromStatus(CRemainingOrderObject &RO_order, const bool for_stop_out = false)
 {
     if (!hedging)
     {
         RemoveSecondExit(RO_order.Price());
+
+        if (for_stop_out)
+        {
+            if (Status.Type() == Buy) current_equity += (RO_order.Price() - Status.Price()) * Status.Vol() * PointValue(Symbol(), Risk);
+            else/* if (Status.Type() == Sell) */ current_equity -= (RO_order.Price() - Status.Price() + spread) * Status.Vol() * PointValue(Symbol(), Risk);
+        }
+
         if (Status.Type() == Buy) realized_profit += Status.Vol() * (RO_order.Price() - Status.Price());
         else realized_profit += Status.Vol() * (Status.Price() - RO_order.Price() - spread);
 
@@ -806,13 +895,13 @@ void COrderIterator::RemoveOrderFromStatus(CRemainingOrderObject *RO_order)
 #endif
             // SL is the second exit.
             double second_exit_price = Status_order.SL();
-            if (Status_order.TP() != RO_order.Price()) second_exit_price = Status_order.TP();
+            if (MathAbs(Status_order.TP() - RO_order.Price()) > point / 2) second_exit_price = Status_order.TP();
 #ifdef _DEBUG
             Print("second_exit_price = ", second_exit_price, " Status_order.TP() = ", Status_order.TP());
             for (CRemainingOrderObject *RO2 = RO.GetFirstNode(); RO2 != NULL; RO2 = RO.GetNextNode())
                 Print(RO2.Price());
 #endif
-            for (CRemainingOrderObject *RO_second_exit = RO.GetFirstNodeAtPrice(second_exit_price); (RO_second_exit != NULL) && (RO_second_exit.Price() == second_exit_price); RO_second_exit = RO.GetNextNode())
+            for (CRemainingOrderObject *RO_second_exit = RO.GetFirstNodeAtPrice(second_exit_price); (RO_second_exit != NULL) && (MathAbs(RO_second_exit.Price() - second_exit_price) < point / 2); RO_second_exit = RO.GetNextNode())
             {
 #ifdef _DEBUG
                 Print(RO_second_exit.Origin());
@@ -826,6 +915,13 @@ void COrderIterator::RemoveOrderFromStatus(CRemainingOrderObject *RO_order)
                     break;
                 }
             }
+        }
+
+        // Calculate new equity by deducting the position's floating profit at the previous price point and adding the position's "floating profit" at the current price point to the previous value of equity (called "current" at this point).
+        if (for_stop_out)
+        {
+            if (Status_order.Type() == Buy) current_equity += (RO_order.Price() - current_price) * Status_order.Vol() * PointValue(Symbol(), Risk);
+            else/* if (Status_order.Type() == Sell) */ current_equity -= (RO_order.Price() - current_price + spread) * Status_order.Vol() * PointValue(Symbol(), Risk);
         }
 
         if (Status_order.Type() == Buy) realized_profit += Status_order.Vol() * (RO_order.Price() - Status_order.Price());
@@ -851,7 +947,7 @@ void COrderIterator::RemoveSecondExit(double price)
 
     // We hit the order's SL or TP, now the remaining one should be canceled too.
     double op2;
-    if (Status.SL() != price)
+    if (MathAbs(Status.SL() - price) > point / 2)
     {
         op2 = Status.SL();
     }
@@ -860,7 +956,7 @@ void COrderIterator::RemoveSecondExit(double price)
         op2 = Status.TP();
     }
 
-    for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(op2); (RO_order != NULL) && (RO_order.Price() == op2); RO_order = RO.GetNextNode())
+    for (CRemainingOrderObject *RO_order = RO.GetFirstNodeAtPrice(op2); (RO_order != NULL) && (MathAbs(RO_order.Price() - op2) < point / 2); RO_order = RO.GetNextNode())
     {
         if (RO_order.Status() == SLTP)
         {
@@ -917,7 +1013,7 @@ void COrderIterator::CalculateUnrealizedProfit()
 void COrderIterator::ActivatePendingOrder(CRemainingOrderObject &RO_order)
 {
     // Find it first.
-    for (CRemainingOrderObject *RO_inactive_order = RO.GetFirstNodeAtPrice(RO_order.StopLimit()); (RO_inactive_order != NULL) && (RO_inactive_order.Price() == RO_order.StopLimit()); RO_inactive_order = RO.GetNextNode())
+    for (CRemainingOrderObject *RO_inactive_order = RO.GetFirstNodeAtPrice(RO_order.StopLimit()); (RO_inactive_order != NULL) && (MathAbs(RO_inactive_order.Price() - RO_order.StopLimit()) < point  / 2); RO_inactive_order = RO.GetNextNode())
     {
         if (RO_inactive_order.Origin() == RO_order.Ticket())
         {
@@ -925,5 +1021,294 @@ void COrderIterator::ActivatePendingOrder(CRemainingOrderObject &RO_order)
             return;
         }
     }
+}
+
+// Finds the potential stop-out price if going all way up.
+double COrderIterator::FindStopOutAbove()
+{
+    bool FOR_STOP_OUT = true;
+    bool UP = true;
+    
+    // Need to know this to keep updating margin when calculating stop-out on above price levels.
+    CalculateMarginInOtherSymbols();
+    
+#ifdef _DEBUG
+    Print("other_symbols_margin = ", other_symbols_margin);
+#endif
+    op_above = -1;
+    while (op_above != UNDEFINED) // Until some legit SO found between the current price and the next order above or no orders left above.
+    {
+        op_above = FindPriceAbove();
+
+#ifdef _DEBUG
+        Print("op_above: ", op_above);
+#endif
+
+        double SO = CalculateStopOut(UP); // Not coded yet.
+
+        if ((op_above != UNDEFINED) && ((SO > op_above) || (SO == DBL_MAX))) // Too high or no SO until next order - process the next order.
+        {
+            ProcessOrder(op_above, FOR_STOP_OUT); // Margin is recalculated inside ProcessOrder.
+        }
+        else return SO; // Legit SO!
+    }
+    return DBL_MAX;
+}
+
+// Finds the potential stop-out price if going all way down.
+double COrderIterator::FindStopOutBelow()
+{
+    bool FOR_STOP_OUT = true;
+    bool DOWN = false;
+    
+    // Need to know this to keep updating margin when calculating stop-out on below price levels.
+    CalculateMarginInOtherSymbols();
+    
+#ifdef _DEBUG
+    Print("other_symbols_margin = ", other_symbols_margin);
+#endif
+    op_below = -1;
+    while (op_below != UNDEFINED) // Until some legit SO found between the current price and the next order below or no orders left below.
+    {
+        op_below = FindPriceBelow();
+
+#ifdef _DEBUG
+        Print("op_below: ", op_below);
+#endif 
+
+        double SO = CalculateStopOut(DOWN); // Not coded yet.
+
+#ifdef _DEBUG
+        Print("SO = ", SO);
+#endif
+
+        if ((op_below != UNDEFINED) && ((SO < op_below) || (SO == DBL_MAX))) // Too low or no SO until next order - process the next order.
+        {
+            ProcessOrder(op_below, FOR_STOP_OUT); // Margin is recalculated inside ProcessOrder.
+        }
+        else return SO; // Legit SO!
+    }
+    return DBL_MAX;
+}
+
+// Returns the actual stop-out level price.
+// up = if true, calculating the upper stop-out level; if false, calculating the lower stop-out level.
+double COrderIterator::CalculateStopOut(bool up)
+{
+    double total_volume = 0;
+    if (hedging)
+    {
+        for (CStatusObject *Status_order = StatusHedging.GetFirstNode(); Status_order != NULL; Status_order = StatusHedging.GetNextNode())
+        {
+            if (Status_order.Type() == Buy) total_volume += Status_order.Vol();
+            else /*if (Status_order.Type() == Sell)*/ total_volume -= Status_order.Vol();
+        }
+    }
+    else
+    {
+        if (CheckPointer(Status) != POINTER_INVALID)
+        {
+            if (Status.Type() == Buy) total_volume += Status.Vol();
+            else /*if (Status.Type() == Sell)*/ total_volume -= Status.Vol();
+        }
+    }
+
+#ifdef _DEBUG
+    Print("total_volume = ", total_volume);
+#endif
+    if (total_volume == 0) return DBL_MAX;
+    if ((total_volume > 0) && (up)) return DBL_MAX;
+    if ((total_volume < 0) && (!up)) return DBL_MAX;
+
+    double required_loss = 0;
+    if (SO_Mode == ACCOUNT_STOPOUT_MODE_PERCENT) // Percentage
+    {
+        if (current_used_margin == 0) return DBL_MAX;
+        double ML = current_equity / current_used_margin;
+        double SO_Equity = current_used_margin * SO_Level / 100;
+        required_loss = current_equity - SO_Equity;
+#ifdef _DEBUG
+        Print("SO_Level = ", SO_Level, "%");
+#endif
+    }
+    else if (SO_Mode == ACCOUNT_STOPOUT_MODE_MONEY) // Money
+    {
+        double free_margin = current_equity - current_used_margin;
+        required_loss = free_margin - SO_Level;
+#ifdef _DEBUG
+        Print("SO_Level = ", SO_Level, "$");
+#endif
+    }
+#ifdef _DEBUG
+    Print("required_loss = ", required_loss);
+    Print("PointValue(Symbol(), Risk) = ", PointValue(Symbol(), Risk));
+#endif
+    double point_volume_value = MathAbs(PointValue(Symbol(), Risk) * total_volume);
+    double point_distance;
+    if (point_volume_value != 0)
+    {
+        point_distance = required_loss / point_volume_value;
+    } else return DBL_MAX;
+    if (up) return current_price + point_distance + spread; 
+    else return current_price - point_distance; 
+}
+
+// Recalculate equity based on the previous equity, open positions, new price, and previous price.
+void COrderIterator::RecalculateCurrentEquity(double new_price)
+{
+    // current_price still stores the previous price at this point.
+    double point_value = PointValue(Symbol(), Risk);
+    
+    if (hedging)
+    {
+        // Cycle through current positions. 
+        if (CheckPointer(StatusHedging) == POINTER_INVALID) return;
+        for (CStatusObject *Status_order = StatusHedging.GetFirstNode(); Status_order != NULL; Status_order = StatusHedging.GetNextNode())
+        {
+            if (Status_order.Type() == Buy) current_equity += (new_price - current_price) * Status_order.Vol() * point_value;
+            else /*if (Status_order.Type() == Sell)*/ current_equity -= (new_price - current_price + spread) * Status_order.Vol() * point_value;
+#ifdef _DEBUG
+            Print("current_price = ", current_price, " Status_order.Price() = ", Status_order.Price());
+#endif
+        }
+    }
+    else
+    {
+        if (CheckPointer(Status) == POINTER_INVALID) return;
+        if (Status.Type() == Buy) current_equity += (new_price - current_price) * Status.Vol() * point_value;
+        else /*if (Status.Type() == Sell)*/ current_equity -= (new_price - current_price + spread) * Status.Vol() * point_value;
+#ifdef _DEBUG
+        Print("current_price = ", current_price, " Status_order.Price() = ", Status_order.Price());
+#endif
+    }
+}
+
+void COrderIterator::RecalculateCurrentUsedMargin()
+{
+    // Recalculate margin for the current symbol trades based on the Status orders.
+    double status_margin = CalculateStatusMargin();
+    // Add other symbol trades' margin and set it as the current used margin.
+    current_used_margin = status_margin + other_symbols_margin;
+}
+
+void COrderIterator::CalculateMarginInOtherSymbols()
+{
+    // 1. Calculate margin of current symbol trades.
+    double status_margin = CalculateStatusMargin();
+    // 2. Subtract that from the account used margin.
+    current_used_margin = AccountInfoDouble(ACCOUNT_MARGIN);
+    // 3. Store the result in other_symbols_margin.
+    other_symbols_margin = current_used_margin - status_margin;
+}
+
+double COrderIterator::CalculateStatusMargin()
+{
+    double ContractSize = SymbolInfoDouble(Symbol(), SYMBOL_TRADE_CONTRACT_SIZE);
+    ENUM_SYMBOL_CALC_MODE CalcMode = (ENUM_SYMBOL_CALC_MODE)SymbolInfoInteger(Symbol(), SYMBOL_TRADE_CALC_MODE);
+    ENUM_ACCOUNT_MARGIN_MODE AccountMarginMode = (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(ACCOUNT_MARGIN_MODE);
+    double MarginHedging = SymbolInfoDouble(Symbol(), SYMBOL_MARGIN_HEDGED);
+    string MarginCurrency = SymbolInfoString(Symbol(), SYMBOL_CURRENCY_MARGIN);
+    if (MarginCurrency == "RUR") MarginCurrency = "RUB";
+    double TickValue = SymbolInfoDouble(Symbol(), SYMBOL_TRADE_TICK_VALUE);
+    double InitialMargin = SymbolInfoDouble(Symbol(), SYMBOL_MARGIN_INITIAL);
+    double MaintenanceMargin = SymbolInfoDouble(Symbol(), SYMBOL_MARGIN_MAINTENANCE);
+    if (MaintenanceMargin == 0) MaintenanceMargin = InitialMargin;
+
+    if (ContractSize == 0)
+    {
+        Print("Contract size = 0");
+        return 0;
+    }
+
+    double initial_margin_rate_buy = 0, maintenance_margin_rate_buy = 0, initial_margin_rate_sell = 0, maintenance_margin_rate_sell = 0;
+    SymbolInfoMarginRate(Symbol(), ORDER_TYPE_BUY, initial_margin_rate_buy, maintenance_margin_rate_buy);
+    SymbolInfoMarginRate(Symbol(), ORDER_TYPE_SELL, initial_margin_rate_sell, maintenance_margin_rate_sell);
+    if (maintenance_margin_rate_buy == 0) maintenance_margin_rate_buy = initial_margin_rate_buy;
+    if (maintenance_margin_rate_sell == 0) maintenance_margin_rate_sell = initial_margin_rate_sell;
+
+    double PositionMargin = 0;
+    // Multiplication or division by 1 is safe.
+    double CurrencyCorrectionCoefficient = 1;
+    double PriceCorrectionCoefficient_buy = 1, PriceCorrectionCoefficient_sell = 1;
+    double Leverage = 1;
+
+    if ((CalcMode == SYMBOL_CALC_MODE_FOREX) || (CalcMode == SYMBOL_CALC_MODE_CFDLEVERAGE))
+    {
+        Leverage = (double)AccountInfoInteger(ACCOUNT_LEVERAGE);
+    }
+    else if (CalcMode == SYMBOL_CALC_MODE_CFDINDEX)
+    {
+        double TickSize = SymbolInfoDouble(Symbol(), SYMBOL_TRADE_TICK_SIZE);
+        Leverage = TickSize / TickValue;
+    }
+    
+    // If Initial Margin of the symbol is given, a simple formula is used.
+    if (InitialMargin > 0) ContractSize = MaintenanceMargin;
+    else if ((CalcMode == SYMBOL_CALC_MODE_CFD) || (CalcMode == SYMBOL_CALC_MODE_CFDINDEX) ||
+            (CalcMode == SYMBOL_CALC_MODE_EXCH_STOCKS) || (CalcMode == SYMBOL_CALC_MODE_CFDLEVERAGE))
+    {
+        PriceCorrectionCoefficient_buy = SymbolInfoDouble(Symbol(), SYMBOL_ASK);
+        PriceCorrectionCoefficient_sell = SymbolInfoDouble(Symbol(), SYMBOL_BID);
+    }
+
+    if (Leverage == 0)
+    {
+        Print("Leverage = 0");
+        return 0;
+    }
+    
+    double Margin1Lot_buy = (ContractSize * PriceCorrectionCoefficient_buy / Leverage) * maintenance_margin_rate_buy;
+    double Margin1Lot_sell = (ContractSize * PriceCorrectionCoefficient_sell / Leverage) * maintenance_margin_rate_sell;
+
+    // Otherwise, no need to adjust margin.
+    if (AccCurrency != MarginCurrency) CurrencyCorrectionCoefficient = CalculateAdjustment(MarginCurrency, Risk);
+    if (CurrencyCorrectionCoefficient == 0) // Couldn't calculate correction coefficient due to the lack of the required currency pair.
+    {
+        CurrencyCorrectionCoefficient = 1;
+        Print("Margin currency conversion impossible. Stop-out level calculations will be incorrect.");
+    }
+    Margin1Lot_buy *= CurrencyCorrectionCoefficient;
+    Margin1Lot_sell *= CurrencyCorrectionCoefficient;
+
+    double status_margin = 0;
+    if (hedging)
+    {
+        double sell_volume = 0;
+        double buy_volume = 0;
+        // Cycle through all Status orders (open positions) to find volume on the Sell and Buy sides.
+        for (CStatusObject *Status_order = StatusHedging.GetFirstNode(); Status_order != NULL; Status_order = StatusHedging.GetNextNode())
+        {
+        
+            if (Status_order.Type() == Buy)
+            {
+                buy_volume += Status_order.Vol();
+            }
+            else /*(Status_order.Type() == Sell) */
+            {
+                sell_volume += Status_order.Vol();
+            }
+        }
+        double HedgedRatio = MarginHedging / ContractSize;
+        if (NormalizeDouble(HedgedRatio, 2) < 1.00) // Hedging on partial or no margin.
+        {
+            double max = MathMax(buy_volume, sell_volume);
+            double min = MathMin(buy_volume, sell_volume);
+            if (buy_volume > sell_volume) status_margin = (buy_volume - sell_volume) * Margin1Lot_buy + sell_volume * HedgedRatio * Margin1Lot_sell;
+            else status_margin = (sell_volume - buy_volume) * Margin1Lot_sell + buy_volume * HedgedRatio * Margin1Lot_buy;
+        }
+        else // Hedged trades use full amount of margin.
+        {
+            status_margin = buy_volume * Margin1Lot_buy + sell_volume * Margin1Lot_sell;
+        }
+    }
+    else // Netting:
+    {
+        if (CheckPointer(Status) != POINTER_INVALID)
+        {
+            if (Status.Type() == Buy) status_margin = Status.Vol() * Margin1Lot_buy;
+            else/* if (Status.Type() == Sell) */ status_margin = Status.Vol() * Margin1Lot_sell;
+        }
+    }
+    return status_margin;
 }
 //+------------------------------------------------------------------+

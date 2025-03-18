@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                         RemainingOrderObject.mqh |
-//|                               Copyright 2014-2022, EarnForex.com |
+//|                               Copyright 2014-2025, EarnForex.com |
 //|                                        https://www.earnforex.com |
 //+------------------------------------------------------------------+
 #include <DOMObject.mqh>

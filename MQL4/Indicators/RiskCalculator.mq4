@@ -1,10 +1,10 @@
 ﻿//+------------------------------------------------------------------+
 //|                                               RiskCalculator.mq4 |
-//|                                  Copyright © 2023, EarnForex.com |
+//|                                  Copyright © 2025, EarnForex.com |
 //+------------------------------------------------------------------+
-#property copyright "Copyright © 2023, EarnForex.com"
+#property copyright "Copyright © 2025, EarnForex.com"
 #property link      "https://www.earnforex.com/metatrader-indicators/Risk-Calculator/"
-#property version   "1.14"
+#property version   "1.15"
 #property icon      "\\Files\\EF-Icon-64x64px.ico"
 #property indicator_separate_window
 #property indicator_plots 0
@@ -47,6 +47,11 @@ input int    offsetY = 20; // Vertical offset for output.
 input group "Reward"
 input bool CalculateReward = false;
 input bool ShowRiskRewardRatio = false; // ShowRiskRewardRatio: works only if CalculateReward = true.
+input group "Stop-out level"
+input bool  CalculateStopOutLevel = false; // CalculateStopOutLevel: If true, stop-out price will be calculated.
+input color StopOutLineColor = clrDarkGray;
+input int StopOutLineWidth = 1;
+input ENUM_LINE_STYLE StopOutLineStyle = STYLE_DASH;
 
 // Main object for calculating minimum profit (maximum loss) with its static variables initialized.
 double COrderIterator::min_profit = UNDEFINED;
@@ -66,6 +71,11 @@ double spread;
 double commission;
 // Global variable to store the detected account currency.
 string AccCurrency;
+// Will need the array to store currency pairs that have been already processed.
+string CP_Processed[];
+// Stop-out level information.
+ENUM_ACCOUNT_STOPOUT_MODE SO_Mode;
+double SO_Level;
 
 #ifdef _DEBUG
 bool single_run = false;
@@ -86,8 +96,13 @@ enum target_orders
 int OnInit()
 {
     IndicatorShortName("Risk Calculator");
+
+    SO_Mode = (ENUM_ACCOUNT_STOPOUT_MODE)AccountInfoInteger(ACCOUNT_MARGIN_SO_MODE);
+    SO_Level = AccountInfoDouble(ACCOUNT_MARGIN_SO_SO);
+
     EventSetTimer(1);
-    return 0;
+
+    return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
@@ -97,12 +112,23 @@ void OnDeinit(const int reason)
 {
     EventKillTimer();
     ObjectsDeleteAll(Window, OBJ_LABEL);
+    ObjectDelete(0, "StopOutLineAbove");
+    ObjectDelete(0, "StopOutLineBelow");
 }
 
 //+------------------------------------------------------------------+
 //| Script program start function.                                   |
 //+------------------------------------------------------------------+
-int start()
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime& time[],
+                const double& open[],
+                const double& high[],
+                const double& low[],
+                const double& close[],
+                const long& tick_volume[],
+                const long& volume[],
+                const int& Spread[])
 {
     // If could not find account currency, probably not connected.
     AccCurrency = AccountCurrency();
@@ -111,7 +137,7 @@ int start()
 
     CalculateRisk();
 
-    return 0;
+    return rates_total;
 }
 
 //+------------------------------------------------------------------+
@@ -149,8 +175,6 @@ void CalculateRisk()
     if (Window == -1) Window = WindowFind("Risk Calculator");
 
     Y = 0;
-
-    ObjectsDeleteAll(0, Window, OBJ_LABEL);
 
     if ((CalculateReward) || (SeparatePendingOpenCalculation)) // Need headers only if Reward information is displayed or separate pending/positions count is used.
     {
@@ -262,14 +286,55 @@ void CalculateRisk()
     }
 
     int total = OrdersTotal();
+    // Preliminary run to remove unused chart objects for currency pairs without orders.
+    int total_cp_processed = ArraySize(CP_Processed);
+    for (int j = 0; j < total_cp_processed; j++)
+    {
+        bool found = false;
+        for (int i = 0; i < total; i++)
+        {
+            if (!OrderSelect(i, SELECT_BY_POS)) return; // Couldn't select order.
+            string cp = OrderSymbol();
+            if (CP_Processed[j] == cp)
+            {
+                found = true;
+                break;
+            }
+        }
+        // If a currency pair from the array is absent from the current orders.
+        if (!found)
+        {
+            // Delete the line with the pair. Other lines will be moved during the respective processing stage.
+            ObjectsDeleteAll(0, CP_Processed[j] + "_RC_", Window, OBJ_LABEL);
+        }
+    }
+
+    // Reset the currency pairs array.
+    ArrayResize(CP_Processed, 0);
+    bool do_not_delete_so_lines = false; // Will be used further to delete unneeded stop-out lines if CalculateStopOutLevel is true.
     for (int i = 0; i < total; i++)
     {
         if (!OrderSelect(i, SELECT_BY_POS)) continue;
 
         string cp = OrderSymbol();
 
-        // This currency pair has already been processed - there is a TEXT_LABEL with its name.
-        if (ObjectFind(0, cp) > 0) continue;
+        // Check if the currency pair has already been processed.
+        bool already_processed = false;
+        total_cp_processed = ArraySize(CP_Processed);
+        for (int j = 0; j < total_cp_processed; j++)
+        {
+            if (CP_Processed[j] == cp)
+            {
+                already_processed = true;
+                break;
+            }
+        }
+        if (already_processed) continue; // No need to proceed as it has already been processed.
+        // Add new currency pair to the processed array.
+        ArrayResize(CP_Processed, total_cp_processed + 1, 10);
+        CP_Processed[total_cp_processed] = cp;
+        
+        if (cp == Symbol()) do_not_delete_so_lines = true;
 
         if (!SeparatePendingOpenCalculation)
         {
@@ -338,6 +403,13 @@ void CalculateRisk()
         }
     }
 
+    // Delete leftover stop-out lines if there are no positions or orders in  the current symbol.
+    if ((CalculateStopOutLevel) && (!do_not_delete_so_lines))
+    {
+        ObjectDelete(0, "StopOutLineAbove");
+        ObjectDelete(0, "StopOutLineBelow");
+    }
+
     Y++;
 
     if (!SeparatePendingOpenCalculation)
@@ -371,6 +443,7 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
     COrderIterator::max_sell_volume = 0;
     OrderIterator = new COrderIterator();
     OrderIterator.mode = mode;
+    OrderIterator.point = SymbolInfoDouble(cp, SYMBOL_POINT);
 
     CDOMObject *order;
 
@@ -448,6 +521,21 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
 
     OrderIterator.current_price = SymbolInfoDouble(cp, SYMBOL_BID);
 
+    if (((to == All) || (to == OnlyPositions)) && (CalculateStopOutLevel) && (cp == Symbol()))
+    {
+        // Create a copy, which will be used only for Stop-Out Level search.
+        COrderIterator* SO_Finder = new COrderIterator(OrderIterator.Status, OrderIterator.RO, OrderIterator.current_price, AccountInfoDouble(ACCOUNT_EQUITY));
+        SO_Finder.point = SymbolInfoDouble(cp, SYMBOL_POINT);
+        double SO_Above = SO_Finder.FindStopOutAbove();
+        delete SO_Finder;
+        // Restart for the below side because the order lists (Status/RO) will be incomplete after the run for the above side.
+        SO_Finder = new COrderIterator(OrderIterator.Status, OrderIterator.RO, OrderIterator.current_price, AccountInfoDouble(ACCOUNT_EQUITY));
+        SO_Finder.point = SymbolInfoDouble(cp, SYMBOL_POINT);
+        double SO_Below = SO_Finder.FindStopOutBelow();
+        delete SO_Finder;
+        DrawSOLevels(SO_Above, SO_Below);
+    }
+
     OrderIterator.Iterate(UNDEFINED);
 
     delete OrderIterator;
@@ -473,28 +561,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     else if (COrderIterator::min_profit == UNLIMITED) RiskOutput = JustifyRight("Unlimited", 25) +  " (" + DoubleToString(MathAbs(COrderIterator::max_sell_volume), 2) + " lot)";
     else
     {
-        double UnitCost;
-
-        int ProfitCalcMode = (int)MarketInfo(cp, MODE_PROFITCALCMODE);
-        string ProfitCurrency = SymbolInfoString(cp, SYMBOL_CURRENCY_PROFIT);
-        if (ProfitCurrency == "RUR") ProfitCurrency = "RUB";
-        // If Symbol is CFD or futures but with different profit currency.
-        if ((ProfitCalcMode == 1) || ((ProfitCalcMode == 2) && ((ProfitCurrency != AccCurrency))))
-        {
-
-            if (ProfitCalcMode == 2) UnitCost = MarketInfo(cp, MODE_TICKVALUE); // Futures, but will still have to be adjusted by CCC.
-            else UnitCost = SymbolInfoDouble(cp, SYMBOL_TRADE_TICK_SIZE) * SymbolInfoDouble(cp, SYMBOL_TRADE_CONTRACT_SIZE); // Apparently, it is more accurate than taking TICKVALUE directly in some cases.
-            // If profit currency is different from account currency.
-            if (ProfitCurrency != AccCurrency)
-            {
-                double CCC = CalculateAdjustment(ProfitCurrency, mode); // Valid only for loss calculation.
-                // Adjust the unit cost.
-                UnitCost *= CCC;
-            }
-        }
-        else UnitCost = MarketInfo(cp, MODE_TICKVALUE); // Futures or Forex.
-        double OnePoint = MarketInfo(cp, MODE_POINT);
-        MoneyRisk = -COrderIterator::min_profit * UnitCost / OnePoint - commission;
+        MoneyRisk = -COrderIterator::min_profit * PointValue(cp, mode) - commission;
         if (mode == Reward) MoneyRisk = -MoneyRisk;
         if (CalculateSwaps) MoneyRisk -= swap;
         if ((ShowRiskRewardRatio) && (mode == Risk)) prev_Risk = MoneyRisk;
@@ -530,20 +597,21 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     TextGetSize("A", w, h);
     h++;
 
+    string cp_suffixed = cp + "_RC_";
     if ((mode == Risk) && (to != OnlyPending)) // No need to repeat the currency pair name when processing Reward or go to Pending orders in Separate mode.
     {
-        ObjectCreate(0, cp, OBJ_LABEL, Window, 0, 0);
-        ObjectSetString(0, cp, OBJPROP_TEXT, cp);
-        ObjectSetString(0, cp, OBJPROP_FONT, FontFace);
-        ObjectSetInteger(0, cp, OBJPROP_FONTSIZE, FontSize);
-        ObjectSetInteger(0, cp, OBJPROP_COLOR, cpFontColor);
-        ObjectSetInteger(0, cp, OBJPROP_CORNER, 0);
-        ObjectSetInteger(0, cp, OBJPROP_XDISTANCE, offsetX + N * w);
-        ObjectSetInteger(0, cp, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
-        ObjectSetInteger(0, cp, OBJPROP_SELECTABLE, false);
-        ObjectSetInteger(0, cp, OBJPROP_HIDDEN, true);
+        ObjectCreate(0, cp_suffixed, OBJ_LABEL, Window, 0, 0);
+        ObjectSetString(0, cp_suffixed, OBJPROP_TEXT, cp);
+        ObjectSetString(0, cp_suffixed, OBJPROP_FONT, FontFace);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_FONTSIZE, FontSize);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_COLOR, cpFontColor);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_CORNER, 0);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_XDISTANCE, offsetX + N * w);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_YDISTANCE, Y * h + offsetY + 1);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, cp_suffixed, OBJPROP_HIDDEN, true);
     }
-    string obj_name = cp + EnumToString(mode) + "Amount" + EnumToString(to);
+    string obj_name = cp_suffixed + EnumToString(mode) + "Amount" + EnumToString(to);
     ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
     ObjectSetString(0, obj_name, OBJPROP_TEXT, RiskOutput);
     ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
@@ -557,7 +625,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
 
     if (SecondRiskOutput != "")
     {
-        obj_name = cp + EnumToString(mode) + "Percentage" + EnumToString(to);
+        obj_name = cp_suffixed + EnumToString(mode) + "Percentage" + EnumToString(to);
         ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
         ObjectSetString(0, obj_name, OBJPROP_TEXT, SecondRiskOutput);
         ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
@@ -569,6 +637,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
         ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
     }
+    else ObjectDelete(0, cp_suffixed + EnumToString(mode) + "Percentage" + EnumToString(to));
 
     if ((ShowRiskRewardRatio) && (mode == Reward)) // Risk-to-reward ratio.
     {
@@ -584,7 +653,7 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
         if (RRR == 0) RRROutput = "-.--";
         else RRROutput = DoubleToString(RRR, 2);
 
-        obj_name = cp + "RRR" + EnumToString(to);
+        obj_name = cp_suffixed + "RRR" + EnumToString(to);
         ObjectCreate(0, obj_name, OBJ_LABEL, Window, 0, 0);
         ObjectSetString(0, obj_name, OBJPROP_TEXT, RRROutput);
         ObjectSetString(0, obj_name, OBJPROP_FONT, FontFace);
@@ -691,6 +760,7 @@ void OutputTotalRisk(const double risk, const mode_of_operation mode, target_ord
         ObjectSetInteger(0, obj_name, OBJPROP_SELECTABLE, false);
         ObjectSetInteger(0, obj_name, OBJPROP_HIDDEN, true);
     }
+    else ObjectDelete(0, "TotalPercentage" + EnumToString(mode) + EnumToString(to)); // Avoid left-over objects.
 
     if ((ShowRiskRewardRatio) && (mode == Reward)) // Risk-to-reward ratio.
     {
@@ -759,8 +829,6 @@ string JustifyRight(string text, const int width)
 //+-----------------------------------------------------------------------------------+
 #define FOREX_SYMBOLS_ONLY 0
 #define NONFOREX_SYMBOLS_ONLY 1
-/*string ReferenceSymbol = NULL, AdditionalReferenceSymbol = NULL;
-bool ReferenceSymbolMode, AdditionalReferenceSymbolMode;*/
 double CalculateAdjustment(const string profit_currency, const mode_of_operation calc_mode)
 {
     string ref_symbol = NULL, add_ref_symbol = NULL;
@@ -935,5 +1003,62 @@ double GetCurrencyCorrectionCoefficient(MqlTick &tick, const mode_of_operation m
         }
     }
     return -1;
+}
+
+double PointValue(const string cp, const mode_of_operation mode)
+{
+    double UnitCost;
+
+    int ProfitCalcMode = (int)MarketInfo(cp, MODE_PROFITCALCMODE);
+    string ProfitCurrency = SymbolInfoString(cp, SYMBOL_CURRENCY_PROFIT);
+    if (ProfitCurrency == "RUR") ProfitCurrency = "RUB";
+    // If Symbol is CFD or futures but with different profit currency.
+    if ((ProfitCalcMode == 1) || ((ProfitCalcMode == 2) && ((ProfitCurrency != AccCurrency))))
+    {
+
+        if (ProfitCalcMode == 2) UnitCost = MarketInfo(cp, MODE_TICKVALUE); // Futures, but will still have to be adjusted by CCC.
+        else UnitCost = SymbolInfoDouble(cp, SYMBOL_TRADE_TICK_SIZE) * SymbolInfoDouble(cp, SYMBOL_TRADE_CONTRACT_SIZE); // Apparently, it is more accurate than taking TICKVALUE directly in some cases.
+        // If profit currency is different from account currency.
+        if (ProfitCurrency != AccCurrency)
+        {
+            double CCC = CalculateAdjustment(ProfitCurrency, mode); // Valid only for loss calculation.
+            // Adjust the unit cost.
+            UnitCost *= CCC;
+        }
+    }
+    else UnitCost = MarketInfo(cp, MODE_TICKVALUE); // Futures or Forex.
+    double OnePoint = MarketInfo(cp, MODE_POINT);
+
+    if (OnePoint != 0) return(UnitCost / OnePoint);
+    return UnitCost; // Only in case of an error with MODE_POINT retrieval.
+}
+
+void DrawSOLevels(double SO_Above, double SO_Below)
+{
+    string name;
+    if ((SO_Above > 0) && (SO_Above != DBL_MAX))
+    {
+        name = "StopOutLineAbove";
+        if (ObjectFind(0, name) < 0) ObjectCreate(0, name, OBJ_HLINE, 0, 0, 0);
+        ObjectSetDouble(0, name, OBJPROP_PRICE, 0, SO_Above);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, StopOutLineColor);
+        ObjectSetInteger(0, name, OBJPROP_STYLE, StopOutLineStyle);
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, StopOutLineWidth);
+        ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, name, OBJPROP_BACK, true);
+    }
+    else ObjectDelete(0, "StopOutLineAbove");
+    if ((SO_Below > 0) && (SO_Below != DBL_MAX))
+    {
+        name = "StopOutLineBelow";
+        if (ObjectFind(0, name) < 0) ObjectCreate(0, name, OBJ_HLINE, 0, 0, 0);
+        ObjectSetDouble(0, name, OBJPROP_PRICE, 0, SO_Below);
+        ObjectSetInteger(0, name, OBJPROP_COLOR, StopOutLineColor);
+        ObjectSetInteger(0, name, OBJPROP_STYLE, StopOutLineStyle);
+        ObjectSetInteger(0, name, OBJPROP_WIDTH, StopOutLineWidth);
+        ObjectSetInteger(0, name, OBJPROP_SELECTABLE, false);
+        ObjectSetInteger(0, name, OBJPROP_BACK, true);
+    }
+    else ObjectDelete(0, "StopOutLineBelow");
 }
 //+------------------------------------------------------------------+

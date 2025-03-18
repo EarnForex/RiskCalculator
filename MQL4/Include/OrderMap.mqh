@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                                     OrderMap.mqh |
-//|                               Copyright 2015-2022, EarnForex.com |
+//|                               Copyright 2015-2025, EarnForex.com |
 //|                                        https://www.earnforex.com |
 //+------------------------------------------------------------------+
 #include <DOMObject.mqh>
