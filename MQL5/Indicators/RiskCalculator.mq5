@@ -1,10 +1,10 @@
-﻿//+------------------------------------------------------------------+
-//|                                               RiskCalculator.mq5 |
-//|                                  Copyright © 2025, EarnForex.com |
 //+------------------------------------------------------------------+
-#property copyright "Copyright © 2025, EarnForex.com"
+//|                                               RiskCalculator.mq5 |
+//|                                  Copyright © 2026, EarnForex.com |
+//+------------------------------------------------------------------+
+#property copyright "Copyright © 2026, EarnForex.com"
 #property link      "https://www.earnforex.com/metatrader-indicators/Risk-Calculator/"
-#property version   "1.15"
+#property version   "1.16"
 #property icon      "\\Files\\EF-Icon-64x64px.ico"
 #property indicator_separate_window
 #property indicator_plots 0
@@ -496,6 +496,7 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
 
     if (CalculateSpreads) spread = SymbolInfoInteger(cp, SYMBOL_SPREAD) * SymbolInfoDouble(cp, SYMBOL_POINT);
     else spread = 0;
+    int digits = (int)SymbolInfoInteger(cp, SYMBOL_DIGITS); // For NormalizeDouble.
 
     if (to != OnlyPositions)
     {
@@ -515,29 +516,29 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
             commission += CommissionPerLot * volume * 2;
             if ((ot == ORDER_TYPE_SELL_LIMIT) || (ot == ORDER_TYPE_SELL_STOP))
             {
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl, tp == 0 ? 0 : tp, Pending, 0, 0);
+                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : NormalizeDouble(sl - spread, digits), tp == 0 ? 0 : NormalizeDouble(tp - spread, digits), Pending, 0, 0);
                 OrderIterator.RO.Add(order);
             }
             else if ((ot == ORDER_TYPE_BUY_STOP) || (ot == ORDER_TYPE_BUY_LIMIT))
             {
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Buy, sl, tp, Pending, 0, 0);
+                order = new CRemainingOrderObject(ticket, NormalizeDouble(OrderGetDouble(ORDER_PRICE_OPEN) - spread, digits), volume, Buy, sl, tp, Pending, 0, 0);
                 OrderIterator.RO.Add(order);
             }
             else if (ot == ORDER_TYPE_SELL_STOP_LIMIT)
             {
                 double stop_limit = OrderGetDouble(ORDER_PRICE_STOPLIMIT);
                 // Add stop-limit order.
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl, tp == 0 ? 0 : tp, StopLimit, 0, stop_limit);
+                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : NormalizeDouble(sl - spread, digits), tp == 0 ? 0 : NormalizeDouble(tp - spread, digits), StopLimit, 0, stop_limit);
                 OrderIterator.RO.Add(order);
                 // Add inactive limit order.
-                order = new CRemainingOrderObject(ticket, stop_limit, volume, Sell, sl == 0 ? 0 : sl, tp == 0 ? 0 : tp, Inactive, ticket, stop_limit);
+                order = new CRemainingOrderObject(ticket, stop_limit, volume, Sell, sl == 0 ? 0 : NormalizeDouble(sl - spread, digits), tp == 0 ? 0 : NormalizeDouble(tp - spread, digits), Inactive, ticket, stop_limit);
                 OrderIterator.RO.Add(order);
             }
             else if (ot == ORDER_TYPE_BUY_STOP_LIMIT)
             {
-                double stop_limit = OrderGetDouble(ORDER_PRICE_STOPLIMIT);
+                double stop_limit = NormalizeDouble(OrderGetDouble(ORDER_PRICE_STOPLIMIT) - spread, digits); // Bid-terms trigger of the limit order.
                 // Add stop-limit order.
-                order = new CRemainingOrderObject(ticket, OrderGetDouble(ORDER_PRICE_OPEN), volume, Buy, sl, tp, StopLimit, 0, stop_limit - spread);
+                order = new CRemainingOrderObject(ticket, NormalizeDouble(OrderGetDouble(ORDER_PRICE_OPEN) - spread, digits), volume, Buy, sl, tp, StopLimit, 0, stop_limit);
                 OrderIterator.RO.Add(order);
                 // Add inactive limit order.
                 order = new CRemainingOrderObject(ticket, stop_limit, volume, Buy, sl, tp, Inactive, ticket, stop_limit);
@@ -590,22 +591,22 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
             }
             else if (pt == POSITION_TYPE_SELL)
             {
-                if (!COrderIterator::hedging) OrderIterator.Status = new CStatusObject(PositionGetDouble(POSITION_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl - spread, tp == 0 ? 0 : tp - spread);
+                if (!COrderIterator::hedging) OrderIterator.Status = new CStatusObject(PositionGetDouble(POSITION_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : NormalizeDouble(sl - spread, digits), tp == 0 ? 0 : NormalizeDouble(tp - spread, digits));
                 else
                 {
-                    order = new CStatusObject(PositionGetInteger(POSITION_TICKET), PositionGetDouble(POSITION_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : sl - spread, tp == 0 ? 0 : tp - spread);
+                    order = new CStatusObject(PositionGetInteger(POSITION_TICKET), PositionGetDouble(POSITION_PRICE_OPEN), volume, Sell, sl == 0 ? 0 : NormalizeDouble(sl - spread, digits), tp == 0 ? 0 : NormalizeDouble(tp - spread, digits));
                     OrderIterator.StatusHedging.Add(order);
                 }
                 if (sl)
                 {
-                    if (COrderIterator::hedging) order = new CRemainingOrderObject(0, sl == 0 ? 0 : sl - spread, volume, Sell, 0, 0, SLTP, PositionGetInteger(POSITION_TICKET), 0);
-                    else order = new CRemainingOrderObject(0, sl == 0 ? 0 : sl - spread, 0, 0, 0, 0, SLTP, 0, 0);
+                    if (COrderIterator::hedging) order = new CRemainingOrderObject(0, NormalizeDouble(sl - spread, digits), volume, Sell, 0, 0, SLTP, PositionGetInteger(POSITION_TICKET), 0);
+                    else order = new CRemainingOrderObject(0, NormalizeDouble(sl - spread, digits), 0, 0, 0, 0, SLTP, 0, 0);
                     OrderIterator.RO.Add(order);
                 }
                 if (tp)
                 {
-                    if (COrderIterator::hedging) order = new CRemainingOrderObject(0, tp == 0 ? 0 : tp - spread, volume, Sell, 0, 0, SLTP, PositionGetInteger(POSITION_TICKET), 0);
-                    else order = new CRemainingOrderObject(0, tp == 0 ? 0 : tp - spread, 0, 0, 0, 0, SLTP, 0, 0);
+                    if (COrderIterator::hedging) order = new CRemainingOrderObject(0, NormalizeDouble(tp - spread, digits), volume, Sell, 0, 0, SLTP, PositionGetInteger(POSITION_TICKET), 0);
+                    else order = new CRemainingOrderObject(0, NormalizeDouble(tp - spread, digits), 0, 0, 0, 0, SLTP, 0, 0);
                     OrderIterator.RO.Add(order);
                 }
             }
@@ -656,9 +657,9 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     else if (COrderIterator::min_profit == UNLIMITED) RiskOutput = JustifyRight("Unlimited", 25) +  " (" + DoubleToString(MathAbs(COrderIterator::max_sell_volume), 2) + " lot)";
     else
     {
-        MoneyRisk = -COrderIterator::min_profit * PointValue(cp, mode) - commission;
-        if (mode == Reward) MoneyRisk = -MoneyRisk;
-        if (CalculateSwaps) MoneyRisk -= swap;
+        double costs = commission - swap; // Commission is a cost; a negative swap is a cost, a positive swap is a gain.
+        if (mode == Risk) MoneyRisk = -COrderIterator::min_profit * PointValue(cp, mode) + costs;
+        else MoneyRisk = COrderIterator::min_profit * PointValue(cp, mode) - costs;
         if ((ShowRiskRewardRatio) && (mode == Risk)) prev_Risk = MoneyRisk;
         double Size;
         if (UseEquityInsteadOfBalance) Size = AccountInfoDouble(ACCOUNT_EQUITY);
@@ -936,7 +937,9 @@ double CalculateUnitCost(const string cp, const mode_of_operation mode)
         // If profit currency is different from account currency.
         if (ProfitCurrency != AccCurrency)
         {
-            return(UnitCost * CalculateAdjustment(ProfitCurrency, mode));
+            double CCC = CalculateAdjustment(ProfitCurrency, mode);
+            if (CCC > 0) UnitCost *= CCC; // Else (If reference pair's tick isn't available yet) return unconverted value.
+            return UnitCost;
         }
         return UnitCost;
     }
@@ -1053,8 +1056,11 @@ double GetCurrencyCorrectionCoefficient(MqlTick &tick, const mode_of_operation m
 double PointValue(const string cp, const mode_of_operation mode)
 {
     double UnitCost = CalculateUnitCost(cp, mode);
+    double TickSize = SymbolInfoDouble(cp, SYMBOL_TRADE_TICK_SIZE);
+    if (TickSize != 0) return(UnitCost / TickSize);
     double OnePoint = SymbolInfoDouble(cp, SYMBOL_POINT);
-    return(UnitCost / OnePoint);
+    if (OnePoint != 0) return(UnitCost / OnePoint); // Fallback if the tick size isn't available.
+    return UnitCost; // Only in case both tick size and point are zero.
 }
 
 void DrawSOLevels(double SO_Above, double SO_Below)

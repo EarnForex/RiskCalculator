@@ -1,10 +1,10 @@
 ﻿//+------------------------------------------------------------------+
 //|                                               RiskCalculator.mq4 |
-//|                                  Copyright © 2025, EarnForex.com |
+//|                                  Copyright © 2026, EarnForex.com |
 //+------------------------------------------------------------------+
-#property copyright "Copyright © 2025, EarnForex.com"
+#property copyright "Copyright © 2026, EarnForex.com"
 #property link      "https://www.earnforex.com/metatrader-indicators/Risk-Calculator/"
-#property version   "1.15"
+#property version   "1.16"
 #property icon      "\\Files\\EF-Icon-64x64px.ico"
 #property indicator_separate_window
 #property indicator_plots 0
@@ -452,6 +452,7 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
 
     if (CalculateSpreads) spread = SymbolInfoInteger(cp, SYMBOL_SPREAD) * SymbolInfoDouble(cp, SYMBOL_POINT);
     else spread = 0;
+    int digits = (int)SymbolInfoInteger(cp, SYMBOL_DIGITS); // For NormalizeDouble.
 
     int total = OrdersTotal();
 
@@ -488,17 +489,17 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
             if (to == OnlyPending) continue; // Don't need to work with positions if counting only pending.
             if (CalculateSwaps) swap += OrderSwap();
             commission += CommissionPerLot * volume;
-            order = new CStatusObject(OrderTicket(), OrderOpenPrice(), volume, Sell, sl == 0 ? 0 : sl - spread, tp == 0 ? 0 : tp - spread);
+            order = new CStatusObject(OrderTicket(), OrderOpenPrice(), volume, Sell, sl == 0 ? 0 : NormalizeDouble(sl - spread, digits), tp == 0 ? 0 : NormalizeDouble(tp - spread, digits));
 
             OrderIterator.Status.Add(order);
             if (sl)
             {
-                order = new CRemainingOrderObject(0, sl == 0 ? 0 : sl - spread, volume, Buy, 0, 0, SLTP, OrderTicket());
+                order = new CRemainingOrderObject(0, NormalizeDouble(sl - spread, digits), volume, Buy, 0, 0, SLTP, OrderTicket());
                 OrderIterator.RO.Add(order);
             }
             if (tp)
             {
-                order = new CRemainingOrderObject(0, tp == 0 ? 0 : tp - spread, volume, Buy, 0, 0, SLTP, OrderTicket());
+                order = new CRemainingOrderObject(0, NormalizeDouble(tp - spread, digits), volume, Buy, 0, 0, SLTP, OrderTicket());
                 OrderIterator.RO.Add(order);
             }
         }
@@ -508,12 +509,12 @@ double ProcessCurrencyPair(const string cp, const mode_of_operation mode, target
             commission += CommissionPerLot * volume * 2;
             if ((OrderType() == ORDER_TYPE_SELL_LIMIT) || (OrderType() == ORDER_TYPE_SELL_STOP))
             {
-                order = new CRemainingOrderObject(OrderTicket(), OrderOpenPrice(), volume, Sell, sl == 0 ? 0 : sl, tp == 0 ? 0 : tp, Pending, 0);
+                order = new CRemainingOrderObject(OrderTicket(), OrderOpenPrice(), volume, Sell, sl == 0 ? 0 : NormalizeDouble(sl - spread, digits), tp == 0 ? 0 : NormalizeDouble(tp - spread, digits), Pending, 0);
                 OrderIterator.RO.Add(order);
             }
             else if ((OrderType() == ORDER_TYPE_BUY_STOP) || (OrderType() == ORDER_TYPE_BUY_LIMIT))
             {
-                order = new CRemainingOrderObject(OrderTicket(), OrderOpenPrice(), volume, Buy, sl, tp, Pending, 0);
+                order = new CRemainingOrderObject(OrderTicket(), NormalizeDouble(OrderOpenPrice() - spread, digits), volume, Buy, sl, tp, Pending, 0);
                 OrderIterator.RO.Add(order);
             }
         }
@@ -561,9 +562,9 @@ double Output(const string cp, const mode_of_operation mode, target_orders to = 
     else if (COrderIterator::min_profit == UNLIMITED) RiskOutput = JustifyRight("Unlimited", 25) +  " (" + DoubleToString(MathAbs(COrderIterator::max_sell_volume), 2) + " lot)";
     else
     {
-        MoneyRisk = -COrderIterator::min_profit * PointValue(cp, mode) - commission;
-        if (mode == Reward) MoneyRisk = -MoneyRisk;
-        if (CalculateSwaps) MoneyRisk -= swap;
+        double costs = commission - swap; // Commission is a cost; a negative swap is a cost, a positive swap is a gain.
+        if (mode == Risk) MoneyRisk = -COrderIterator::min_profit * PointValue(cp, mode) + costs;
+        else MoneyRisk = COrderIterator::min_profit * PointValue(cp, mode) - costs;
         if ((ShowRiskRewardRatio) && (mode == Risk)) prev_Risk = MoneyRisk;
         double Size;
         if (UseEquityInsteadOfBalance) Size = AccountEquity();
@@ -1027,10 +1028,13 @@ double PointValue(const string cp, const mode_of_operation mode)
         }
     }
     else UnitCost = MarketInfo(cp, MODE_TICKVALUE); // Futures or Forex.
-    double OnePoint = MarketInfo(cp, MODE_POINT);
 
-    if (OnePoint != 0) return(UnitCost / OnePoint);
-    return UnitCost; // Only in case of an error with MODE_POINT retrieval.
+    double TickSize = MarketInfo(cp, MODE_TICKSIZE);
+    if (TickSize != 0) return(UnitCost / TickSize);
+    double OnePoint = MarketInfo(cp, MODE_POINT);
+    if (OnePoint != 0) return(UnitCost / OnePoint); // Fallback if the tick size isn't available.
+    
+    return UnitCost; // Only in case both tick size and point are zero.
 }
 
 void DrawSOLevels(double SO_Above, double SO_Below)

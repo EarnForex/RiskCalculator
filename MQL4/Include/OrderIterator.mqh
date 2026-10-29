@@ -1,6 +1,6 @@
 //+------------------------------------------------------------------+
 //|                                                OrderIterator.mqh |
-//|                               Copyright 2015-2025, EarnForex.com |
+//|                                    Copyright 2026, EarnForex.com |
 //|                                       https://www.earnforex.com/ |
 //+------------------------------------------------------------------+
 #include <OrderMap.mqh>
@@ -9,8 +9,31 @@
 //+------------------------------------------------------------------+
 //| Class COrderIterator                                             |
 //| Purpose: Iterates through orders recursively to find minimum     |
-//|          profit (maximum loss). See JS for detailed explanation. |
+//|          profit (maximum loss).                                  |
 //+------------------------------------------------------------------+
+// Status: stores the currently alive orders.
+// Sorted list of objects:
+// Structure:
+// 		type - Sell or Buy.
+// 		sl - price of SL.
+// 		tp - price of TP.
+// 		open price - Bid for sells, Ask for buys.
+//		volume - volume in lots.
+
+// Remaining orders (RO): similar format as 'orders' but:
+// 1. Does not have 'executed' orders - they are moved to Status.
+// 2. Does not have 'closed' orders - they are removed completely.
+// Sorted list of objects:
+// Structure:
+// 		type - Sell or Buy.
+// 		sl - price of SL.
+// 		tp - price of TP.
+//		volume - volume in lots.
+// 		status - pending/sltp: pending - a pending order; sltp - the order is an SL or a TP of some executed order.
+// 		open price - Bid for sells, Ask for buys.
+// 		origin_price - the open price of the origin order under. Only for 'sltp' status.
+// 		origin_number - the number of the origin order under origin price. Only for 'sltp' status.
+
 #define UNLIMITED -DBL_MAX
 #define UNDEFINED DBL_MAX
 
@@ -212,13 +235,13 @@ void COrderIterator::Iterate(const double order_price)
 
     if (op_below != UNDEFINED)
     {
-        skip_above = skip;
         if (!skip_below)
         {
 #ifdef _DEBUG
             Print("Creating OI_new_b.");
 #endif
             COrderIterator *OI_new_b = new COrderIterator(Status, RO, current_price, unrealized_profit, realized_profit, mode);
+            OI_new_b.skip_above = skip;
             OI_new_b.point = point;
             OI_new_b.Iterate(op_below);
             delete OI_new_b;
@@ -310,10 +333,10 @@ void COrderIterator::CheckPairedOrders()
                 same_order_sl_tp = true;
                 // Upper order can only be an SL for a Sell.
                 if (Status_order.Type() == Sell)
-                    min_profit_above += Status_order.Price() - op_above;
+                    min_profit_above += Status_order.Vol() * (Status_order.Price() - op_above - spread);
                 // Upper order can only be a TP for a Buy.
                 else if (Status_order.Type() == Buy)
-                    min_profit_above += op_above - Status_order.Price();
+                    min_profit_above += Status_order.Vol() * (op_above - Status_order.Price());
             }
             else return; // SL/TP without a counterpart at op_below is a different case.
         }
@@ -335,10 +358,10 @@ void COrderIterator::CheckPairedOrders()
                 {
                     // Lower order can only be an SL for a Buy.
                     if (Status_order.Type() == Buy)
-                        min_profit_below += op_below - Status_order.Price();
+                        min_profit_below += Status_order.Vol() * (op_below - Status_order.Price());
                     // Lower order can only be a TP for a Sell.
                     else if (Status_order.Type() == Sell)
-                        min_profit_below += Status_order.Price() - op_below;
+                        min_profit_below += Status_order.Vol() * (Status_order.Price() - op_below - spread);
                 }
                 else return; // SL/TP without a counterpart at op_above is a different case.
             }
@@ -515,7 +538,7 @@ void COrderIterator::CalculateMaxDown()
 // Adds a newly executed order to the Status array.
 void COrderIterator::AddExecutedOrderToStatus(CRemainingOrderObject &RO_order)
 {
-    CStatusObject *Status_order = new CStatusObject(RO_order.Ticket(), RO_order.Price(), RO_order.Vol(), RO_order.Type(), RO_order.SL(), RO_order.TP());
+    CStatusObject *Status_order = new CStatusObject(RO_order.Ticket(), RO_order.Type() == Buy ? RO_order.Price() + spread : RO_order.Price(), RO_order.Vol(), RO_order.Type(), RO_order.SL(), RO_order.TP());
     Status.Add(Status_order);
 #ifdef _DEBUG
     Print("Just added order #", RO_order.Ticket(), " to Status.");
